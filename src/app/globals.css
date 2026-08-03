@@ -49,6 +49,10 @@ button {
   background: #111827;
   color: #f9fafb;
   padding: 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -82,6 +86,16 @@ button {
   background: transparent;
   color: #dbeafe;
   text-align: left;
+}
+
+.step-button:hover:not([data-active="true"]) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+.step-button:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 2px;
 }
 
 .step-button[data-active="true"] {
@@ -373,10 +387,96 @@ textarea:focus {
 
   .sidebar {
     border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 10;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .brand {
+    gap: 0;
+    margin-bottom: 0;
+    flex: 0 0 auto;
+    padding-right: 16px;
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .brand strong {
+    font-size: 14px;
+    letter-spacing: -0.01em;
+  }
+
+  .brand span {
+    font-size: 11px;
+  }
+
+  /* Vertical rail becomes a horizontal strip; the <h1> in .toolbar already
+     names the active step, so labels here stay quiet and secondary. */
+  .steps {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .steps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .step-button {
+    grid-template-columns: auto auto;
+    gap: 8px;
+    width: auto;
+    padding: 7px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+    font-size: 13px;
+    color: #a9b6c6;
+  }
+
+  .step-button[data-active="true"] {
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  .step-button[data-active="true"] .step-number {
+    background: #5eead4;
+    color: #0f2e2b;
+    font-weight: 700;
+  }
+
+  .step-number {
+    width: 19px;
+    height: 19px;
+    font-size: 11px;
   }
 
   .workspace {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  /* Labels would force horizontal scrolling well before the last step;
+     numbered pills keep all four reachable without it. */
+  .step-button span:not(.step-number) {
+    display: none;
+  }
+
+  .step-button {
+    padding: 7px;
+  }
+
+  .steps {
+    gap: 6px;
   }
 }
 
