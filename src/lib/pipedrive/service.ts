@@ -121,6 +121,18 @@ export function getCustomFieldMappings() {
   return getPipedriveConfig().customFields;
 }
 
+export async function getDealFields() {
+  return pipedriveRequest<AnyRecord[]>("/dealFields");
+}
+
+export async function getPersonFields() {
+  return pipedriveRequest<AnyRecord[]>("/personFields");
+}
+
+export async function getOrganizationFields() {
+  return pipedriveRequest<AnyRecord[]>("/organizationFields");
+}
+
 export function buildMeetingActivityPayload(data: MeetingStepInput): PipedriveActivityPayload {
   const note = [
     data.agenda,

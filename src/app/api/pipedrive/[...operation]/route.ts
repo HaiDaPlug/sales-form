@@ -8,6 +8,9 @@ import {
   createOrganization,
   createPerson,
   getCustomFieldMappings,
+  getDealFields,
+  getOrganizationFields,
+  getPersonFields,
   getPipelines,
   getStages,
   getUsers,
@@ -22,14 +25,14 @@ import {
 import { dealStepSchema, meetingStepSchema } from "@/lib/crm/schemas";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     operation: string[];
-  };
+  }>;
 };
 
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
-    const operation = context.params.operation.join("/");
+    const operation = (await context.params).operation.join("/");
     const searchParams = request.nextUrl.searchParams;
 
     if (operation === "persons/search") {
@@ -54,6 +57,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (operation === "pipelines") return jsonOk(await getPipelines());
     if (operation === "stages") return jsonOk(await getStages(searchParams.get("pipelineId") ?? undefined));
     if (operation === "custom-field-mappings") return jsonOk(getCustomFieldMappings());
+    if (operation === "deal-fields") return jsonOk(await getDealFields());
+    if (operation === "person-fields") return jsonOk(await getPersonFields());
+    if (operation === "organization-fields") return jsonOk(await getOrganizationFields());
 
     return jsonError(`Unknown Pipedrive GET operation: ${operation}`, 404);
   } catch (error) {
@@ -63,7 +69,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
-    const operation = context.params.operation.join("/");
+    const operation = (await context.params).operation.join("/");
     const body = await request.json();
 
     if (operation === "persons") return jsonOk(await createPerson(body));
