@@ -4,6 +4,9 @@ out/
 dist/
 coverage/
 
+# Run history written at runtime.
+.data/
+
 .env
 .env.local
 .env.*.local
