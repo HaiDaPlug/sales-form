@@ -1,13 +1,26 @@
-import type { ContractStepData, MediacleaningStepData } from "@/lib/crm/types";
+import type { ContractStepInput, MediacleaningStepInput } from "@/lib/crm/schemas";
 
-export type GeneratedPdf = {
+/**
+ * Draft document generation.
+ *
+ * These are NOT PDFs yet. No PDF library is installed and the approved Swedish
+ * legal copy is still outstanding from the client, so this emits plain text
+ * with an honest `.txt` name and `text/plain` type — the previous version
+ * labelled the same text as `application/pdf`, which produces a file no reader
+ * can open.
+ *
+ * Replacing this with real PDF rendering means changing this file only; the
+ * routes already stream `blob` with `contentType`.
+ */
+export type GeneratedDocument = {
   fileName: string;
+  contentType: string;
   blob: Blob;
 };
 
-export async function generateMediacleaningPdf(data: MediacleaningStepData): Promise<GeneratedPdf> {
+export async function generateMediacleaningPdf(data: MediacleaningStepInput): Promise<GeneratedDocument> {
   const body = [
-    "DRAFT PDF PLACEHOLDER",
+    "UTKAST — EJ FÄRDIGT DOKUMENT",
     "Mediacleaning",
     `Kund: ${data.companyName}`,
     `Org.nr: ${data.organizationNumber}`,
@@ -15,15 +28,15 @@ export async function generateMediacleaningPdf(data: MediacleaningStepData): Pro
     `Dokument: ${data.documentTypes.join(", ")}`,
     `Leverantörer: ${data.suppliers.map((supplier) => supplier.name).join(", ")}`,
     "",
-    "Approved Swedish legal copy must be added before production use."
+    "Godkänd svensk avtalstext måste läggas till före produktionsbruk."
   ].join("\n");
 
-  return textPdfPlaceholder(`mediacleaning-${data.organizationNumber}.pdf`, body);
+  return draftDocument(`mediacleaning-${sanitizeFileNamePart(data.organizationNumber)}`, body);
 }
 
-export async function generateContractPdf(data: ContractStepData): Promise<GeneratedPdf> {
+export async function generateContractPdf(data: ContractStepInput): Promise<GeneratedDocument> {
   const body = [
-    "DRAFT PDF PLACEHOLDER",
+    "UTKAST — EJ FÄRDIGT DOKUMENT",
     "Avtalssammanfattning",
     "Leverantör: Digital Kontakt",
     `Kund: ${data.companyName}`,
@@ -34,15 +47,21 @@ export async function generateContractPdf(data: ContractStepData): Promise<Gener
     `Bindningstid: ${data.bindingPeriodMonths} månader`,
     `Tjänster: ${data.includedServices.join(", ")}`,
     "",
-    "Approved Swedish legal copy must be added before production use."
+    "Godkänd svensk avtalstext måste läggas till före produktionsbruk."
   ].join("\n");
 
-  return textPdfPlaceholder(`avtal-${data.organizationNumber}.pdf`, body);
+  return draftDocument(`avtal-${sanitizeFileNamePart(data.organizationNumber)}`, body);
 }
 
-function textPdfPlaceholder(fileName: string, body: string): GeneratedPdf {
+function draftDocument(baseName: string, body: string): GeneratedDocument {
   return {
-    fileName,
-    blob: new Blob([body], { type: "application/pdf" })
+    fileName: `${baseName}-utkast.txt`,
+    contentType: "text/plain; charset=utf-8",
+    blob: new Blob([body], { type: "text/plain; charset=utf-8" })
   };
+}
+
+/** Keeps user input out of the Content-Disposition header structure. */
+function sanitizeFileNamePart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9-_]/g, "") || "okant";
 }
