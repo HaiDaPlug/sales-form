@@ -8,12 +8,24 @@ type RequestOptions = {
   formData?: FormData;
 };
 
+/**
+ * Upstream failure. Carries Pipedrive's status so the route layer can map it to
+ * a sensible response instead of flattening everything to 400.
+ */
+export class PipedriveApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "PipedriveApiError";
+    this.status = status;
+  }
+}
+
 export async function pipedriveRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const config = getPipedriveConfig();
   const token = assertPipedriveToken(config);
   const url = new URL(`${config.apiBaseUrl}${path}`);
-
-  url.searchParams.set("api_token", token);
 
   for (const [key, value] of Object.entries(options.query ?? {})) {
     if (value !== undefined && value !== "") {
@@ -21,7 +33,9 @@ export async function pipedriveRequest<T>(path: string, options: RequestOptions 
     }
   }
 
-  const headers: HeadersInit = {};
+  // Token travels in a header rather than the query string, so it cannot leak
+  // into proxy logs, browser history, or Referer headers.
+  const headers: HeadersInit = { "x-api-token": token };
   let body: BodyInit | undefined;
 
   if (options.formData) {
@@ -31,18 +45,27 @@ export async function pipedriveRequest<T>(path: string, options: RequestOptions 
     body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(url, {
-    method: options.method ?? "GET",
-    headers,
-    body,
-    cache: "no-store"
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      method: options.method ?? "GET",
+      headers,
+      body,
+      cache: "no-store"
+    });
+  } catch (error) {
+    throw new PipedriveApiError(
+      `Kunde inte nå Pipedrive: ${error instanceof Error ? error.message : String(error)}`,
+      502
+    );
+  }
 
   const payload = (await response.json().catch(() => null)) as PipedriveResponse<T> | null;
 
   if (!response.ok || payload?.success === false) {
     const message = payload?.error ?? `Pipedrive request failed: ${response.status}`;
-    throw new Error(message);
+    throw new PipedriveApiError(message, response.status || 502);
   }
 
   return payload?.data as T;

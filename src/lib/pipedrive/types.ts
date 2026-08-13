@@ -59,3 +59,36 @@ export type PipedriveFilePayload = {
   organizationId?: CrmRecordId;
   activityId?: CrmRecordId;
 };
+
+/**
+ * Pipedrive's `/v1/*\/search` endpoints wrap hits as
+ * `{ data: { items: [{ result_score, item }] } }` rather than returning a flat
+ * array. Verified against the live API. The raw envelope is normalized
+ * server-side so the UI never has to know this shape.
+ */
+export type PipedriveSearchEnvelope = {
+  items?: Array<{ result_score?: number; item?: Record<string, unknown> }>;
+};
+
+/**
+ * Flat, UI-ready option for the reference dropdowns (users, pipelines, stages).
+ * `pipelineId` is set on stages so the UI can filter them without another fetch.
+ */
+export type ReferenceOption = {
+  id: CrmRecordId;
+  name: string;
+  pipelineId?: CrmRecordId;
+};
+
+/** Flat, UI-ready search hit. One shape for all three record types. */
+export type SearchHit = {
+  id: CrmRecordId;
+  name: string;
+  /** Supporting detail shown under the name, e.g. email or address. */
+  detail?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  organizationId?: CrmRecordId;
+  organizationName?: string;
+};
