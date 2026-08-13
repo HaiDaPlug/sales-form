@@ -7,7 +7,20 @@ import type { MediacleaningStepData } from "@/lib/crm/types";
 export function MediacleaningStep({ data, onChange }: StepProps<MediacleaningStepData>) {
   return (
     <>
-      <LookupBox title="Sök befintlig affär för uppladdning" endpoint="/api/pipedrive/deals/search" />
+      <LookupBox
+        title="Koppla befintlig affär för uppladdning"
+        endpoint="/api/pipedrive/deals/search"
+        selectedLabel={data.dealId ? `Affär ${data.dealId}` : undefined}
+        onClear={() => onChange({ ...data, dealId: "" })}
+        onSelect={(hit) =>
+          onChange({
+            ...data,
+            dealId: hit.id,
+            organizationId: hit.organizationId ?? data.organizationId,
+            companyName: data.companyName || hit.organizationName || ""
+          })
+        }
+      />
       <FormSection title="Kund och dokument">
         <TextField label="Företagsnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
         <TextField label="Organisationsnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
@@ -32,7 +45,7 @@ export function MediacleaningStep({ data, onChange }: StepProps<MediacleaningSte
         </div>
       </FormSection>
 
-      <SupplierEditor suppliers={data.suppliers} onChange={(suppliers) => onChange({ ...data, suppliers })} />
+      <SupplierEditor suppliers={data.suppliers ?? []} onChange={(suppliers) => onChange({ ...data, suppliers })} />
       <FormSection title="Intern kommentar">
         <TextArea className="full" label="Kommentar" value={data.internalComment} onChange={(internalComment) => onChange({ ...data, internalComment })} />
       </FormSection>

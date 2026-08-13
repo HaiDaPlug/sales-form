@@ -1,12 +1,59 @@
-import { FormSection, SelectField, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import { useMemo } from "react";
+import { FormSection, ReferenceSelect, SelectField, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
 import { LookupBox } from "@/components/sales-wizard/LookupBox";
 import type { DealStepData } from "@/lib/crm/types";
 
-export function DealStep({ data, onChange }: StepProps<DealStepData>) {
+export function DealStep({ data, onChange, reference }: StepProps<DealStepData>) {
+  // Stages are fetched for every pipeline; narrow them to the selected one.
+  const stagesForPipeline = useMemo(() => {
+    const pipelineId = data.deal.pipelineId;
+    if (!pipelineId) return [];
+
+    return reference.stages.filter((stage) => String(stage.pipelineId) === String(pipelineId));
+  }, [data.deal.pipelineId, reference.stages]);
+
   return (
     <>
-      <LookupBox title="Sök möjlig dubblett: person" endpoint="/api/pipedrive/persons/search" />
-      <LookupBox title="Sök möjlig dubblett: organisation" endpoint="/api/pipedrive/organizations/search" />
+      <LookupBox
+        title="Koppla befintlig person"
+        endpoint="/api/pipedrive/persons/search"
+        selectedLabel={data.person.id ? `${data.person.name} (ID ${data.person.id})` : undefined}
+        onClear={() => onChange({ ...data, person: { ...data.person, id: undefined, organizationId: undefined } })}
+        onSelect={(hit) =>
+          onChange({
+            ...data,
+            person: {
+              ...data.person,
+              id: hit.id,
+              name: hit.name,
+              email: hit.email ?? data.person.email,
+              phone: hit.phone ?? data.person.phone,
+              organizationId: hit.organizationId
+            }
+          })
+        }
+      />
+      <LookupBox
+        title="Koppla befintlig organisation"
+        endpoint="/api/pipedrive/organizations/search"
+        selectedLabel={data.organization.id ? `${data.organization.name} (ID ${data.organization.id})` : undefined}
+        onClear={() => onChange({ ...data, organization: { ...data.organization, id: undefined } })}
+        onSelect={(hit) =>
+          onChange({
+            ...data,
+            organization: {
+              ...data.organization,
+              id: hit.id,
+              name: hit.name,
+              address: hit.address ?? data.organization.address
+            }
+          })
+        }
+      />
+
+      <p className="hint">
+        Utan vald post skapas en ny person och organisation i Pipedrive, och affären kopplas till dem.
+      </p>
 
       <FormSection title="Kontakt och organisation">
         <TextField label="Kontaktperson" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
@@ -40,9 +87,35 @@ export function DealStep({ data, onChange }: StepProps<DealStepData>) {
           options={["SEK", "EUR", "USD"]}
           onChange={(currency) => onChange({ ...data, deal: { ...data.deal, currency: currency as DealStepData["deal"]["currency"] } })}
         />
-        <TextField label="Pipeline ID" value={String(data.deal.pipelineId ?? "")} onChange={(pipelineId) => onChange({ ...data, deal: { ...data.deal, pipelineId } })} />
-        <TextField label="Stage ID" value={String(data.deal.stageId ?? "")} onChange={(stageId) => onChange({ ...data, deal: { ...data.deal, stageId } })} />
-        <TextField label="Säljare ID" value={String(data.sellerId ?? "")} onChange={(sellerId) => onChange({ ...data, sellerId })} />
+        <ReferenceSelect
+          label="Pipeline"
+          value={data.deal.pipelineId}
+          options={reference.pipelines}
+          loading={reference.loading}
+          error={reference.error}
+          onChange={(pipelineId) =>
+            // Changing pipeline invalidates the stage: stages belong to one
+            // pipeline, so keeping the old one would send a mismatched pair.
+            onChange({ ...data, deal: { ...data.deal, pipelineId, stageId: "" } })
+          }
+        />
+        <ReferenceSelect
+          label="Steg"
+          value={data.deal.stageId}
+          options={stagesForPipeline}
+          loading={reference.loading}
+          error={reference.error}
+          disabledHint={data.deal.pipelineId ? undefined : "Välj pipeline först"}
+          onChange={(stageId) => onChange({ ...data, deal: { ...data.deal, stageId } })}
+        />
+        <ReferenceSelect
+          label="Säljare"
+          value={data.sellerId}
+          options={reference.users}
+          loading={reference.loading}
+          error={reference.error}
+          onChange={(sellerId) => onChange({ ...data, sellerId })}
+        />
         <TextArea className="full" label="Viktigast för kunden" value={data.viktigastForKunden} onChange={(viktigastForKunden) => onChange({ ...data, viktigastForKunden })} />
         <TextField label="Faktura start" type="date" value={data.fakturaStart} onChange={(fakturaStart) => onChange({ ...data, fakturaStart })} />
         <TextField label="Fakturagrupp" value={data.fakturagrupp} onChange={(fakturagrupp) => onChange({ ...data, fakturagrupp })} />
