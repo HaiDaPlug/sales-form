@@ -7,13 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@types/node": "^20.14.10",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "next": "^16.2.10",
+    "pdf-lib": "^1.17.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^5.5.3",
@@ -21,6 +24,7 @@
   },
   "devDependencies": {
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.10"
+    "eslint-config-next": "^16.2.10",
+    "vitest": "^3.2.7"
   }
 }
