@@ -22,6 +22,7 @@ export type PipedriveCustomFieldName = keyof PipedriveCustomFieldMappings;
 export type PipedriveRuntimeConfig = {
   apiToken?: string;
   apiBaseUrl: string;
+  schedulerUrl?: string;
   defaultPipelineId?: string;
   defaultStageId?: string;
   defaultCurrency: string;
@@ -51,6 +52,7 @@ export function getPipedriveConfig(): PipedriveRuntimeConfig {
   return {
     apiToken: env.PIPEDRIVE_API_TOKEN,
     apiBaseUrl: env.PIPEDRIVE_API_BASE_URL,
+    schedulerUrl: env.PIPEDRIVE_SCHEDULER_URL,
     defaultPipelineId: env.PIPEDRIVE_DEFAULT_PIPELINE_ID,
     defaultStageId: env.PIPEDRIVE_DEFAULT_STAGE_ID,
     defaultCurrency: env.PIPEDRIVE_DEFAULT_CURRENCY,

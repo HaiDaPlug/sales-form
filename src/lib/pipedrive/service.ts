@@ -1,7 +1,7 @@
 import { assertCustomFieldMappings, getPipedriveConfig } from "@/lib/config/pipedrive";
 import type { CrmRecordId } from "@/lib/crm/types";
 import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
-import { pipedriveRequest } from "@/lib/pipedrive/client";
+import { PipedriveApiError, pipedriveRequest } from "@/lib/pipedrive/client";
 import type {
   PipedriveActivityPayload,
   PipedriveDealPayload,
@@ -55,13 +55,6 @@ export async function createPerson(payload: PipedrivePersonPayload) {
   });
 }
 
-export async function updatePerson(id: CrmRecordId, payload: Partial<PipedrivePersonPayload>) {
-  return pipedriveRequest<AnyRecord>(`/persons/${id}`, {
-    method: "PUT",
-    body: payload
-  });
-}
-
 export async function searchOrganizations(term: string): Promise<SearchHit[]> {
   const envelope = await pipedriveRequest<PipedriveSearchEnvelope>("/organizations/search", {
     query: { term, fields: "name,address", limit: MAX_SEARCH_RESULTS }
@@ -84,17 +77,6 @@ export async function createOrganization(payload: PipedriveOrganizationPayload) 
     method: "POST",
     body: payload
   });
-}
-
-export async function updateOrganization(id: CrmRecordId, payload: Partial<PipedriveOrganizationPayload>) {
-  return pipedriveRequest<AnyRecord>(`/organizations/${id}`, {
-    method: "PUT",
-    body: payload
-  });
-}
-
-export async function linkPersonToOrganization(personId: CrmRecordId, organizationId: CrmRecordId) {
-  return updatePerson(personId, { org_id: organizationId } as Partial<PipedrivePersonPayload>);
 }
 
 export async function searchDeals(
@@ -135,6 +117,52 @@ export async function createDeal(payload: PipedriveDealPayload) {
   });
 }
 
+/** Reads one deal, used to confirm which organization it belongs to. */
+export async function getDeal(dealId: CrmRecordId) {
+  return pipedriveRequest<AnyRecord>(`/deals/${dealId}`);
+}
+
+/**
+ * Confirms a deal belongs to the organization the seller selected.
+ *
+ * A document attached to the wrong customer's deal is a data-protection
+ * problem, not just a mistake, so the pairing is verified server-side before
+ * anything is uploaded rather than trusted from the form.
+ */
+export async function assertDealBelongsToOrganization(dealId: CrmRecordId, organizationId: CrmRecordId) {
+  const deal = await getDeal(dealId);
+  const dealOrganizationId = readOrganizationId(deal);
+
+  if (dealOrganizationId === undefined) {
+    throw new DealOwnershipError("Den valda affären saknar kopplad organisation.");
+  }
+
+  if (String(dealOrganizationId) !== String(organizationId)) {
+    throw new DealOwnershipError(
+      "Den valda affären tillhör en annan organisation. Välj en affär som hör till kunden."
+    );
+  }
+}
+
+/** A deal/organization pairing that does not exist in Pipedrive. */
+export class DealOwnershipError extends Error {
+  readonly status = 422;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "DealOwnershipError";
+  }
+}
+
+/** `org_id` is a bare id on some payloads and a nested object on others. */
+function readOrganizationId(deal: AnyRecord | null | undefined): CrmRecordId | undefined {
+  const orgId = deal?.org_id;
+
+  if (typeof orgId === "string" || typeof orgId === "number") return orgId;
+
+  return readId(asRecord(orgId));
+}
+
 export async function createActivity(payload: PipedriveActivityPayload) {
   return pipedriveRequest<AnyRecord>("/activities", {
     method: "POST",
@@ -150,9 +178,12 @@ export async function createNote(payload: PipedriveNotePayload) {
 }
 
 /**
- * Not currently reachable over HTTP. The former JSON route could never work —
- * a Blob does not survive JSON.stringify — so it was removed. Wiring this up
- * needs a multipart/form-data route, which belongs with the real PDF work.
+ * Uploads a generated document, attached to a deal or an organization.
+ *
+ * Called server-side by `attachDocument` rather than through a route: the file
+ * is produced in the same request, so it never has to cross an HTTP boundary as
+ * JSON — which is what made the former passthrough route impossible (a Blob
+ * does not survive JSON.stringify).
  */
 export async function uploadFile(payload: PipedriveFilePayload) {
   const formData = new FormData();
@@ -230,6 +261,21 @@ export async function getStages(pipelineId?: CrmRecordId): Promise<ReferenceOpti
     }));
 }
 
+/**
+ * The stage a deal lands in when the seller picked a pipeline but no stage.
+ *
+ * Resolves the pipeline's own first stage rather than falling back to a global
+ * default, which would drop the deal into an unrelated pipeline's stage. Returns
+ * `undefined` if the pipeline has no stages, letting Pipedrive apply its own
+ * default rather than failing the deal over a cosmetic field.
+ */
+export async function resolveFirstStageId(pipelineId: CrmRecordId): Promise<CrmRecordId | undefined> {
+  const stages = await getStages(pipelineId);
+
+  // `getStages` already orders by `order_nr` within a pipeline.
+  return stages.find((stage) => String(stage.pipelineId) === String(pipelineId))?.id ?? stages[0]?.id;
+}
+
 export function getCustomFieldMappings() {
   return getPipedriveConfig().customFields;
 }
@@ -246,7 +292,10 @@ export async function getOrganizationFields() {
   return pipedriveRequest<AnyRecord[]>("/organizationFields");
 }
 
-export function buildMeetingActivityPayload(data: MeetingStepInput): PipedriveActivityPayload {
+export function buildMeetingActivityPayload(
+  data: MeetingStepInput,
+  parties: ResolvedMeetingParties
+): PipedriveActivityPayload {
   const note = [
     data.agenda,
     data.technicianNotes ? `IT-tekniker: ${data.technicianNotes}` : "",
@@ -261,8 +310,11 @@ export function buildMeetingActivityPayload(data: MeetingStepInput): PipedriveAc
     due_date: data.date,
     due_time: data.time,
     duration: minutesToPipedriveDuration(data.durationMinutes),
-    person_id: data.person.id,
-    org_id: data.organization?.id,
+    // Resolved IDs are passed in rather than read from `data`, so the payload
+    // cannot be built with the undefined form IDs that previously left every
+    // new contact's meeting orphaned.
+    person_id: parties.personId,
+    org_id: parties.organizationId,
     user_id: data.sellerId,
     location: data.locationOrLink,
     note
@@ -274,7 +326,136 @@ export type ResolvedDealParties = {
   organizationId: CrmRecordId;
   createdPerson: boolean;
   createdOrganization: boolean;
+  personLinkedToOrganization: boolean;
 };
+
+/**
+ * A meeting's contact and, when the seller supplied one, its organization.
+ *
+ * `organizationId` is optional here and required on a deal: a meeting may be
+ * booked from contact details alone (S01), while a deal always belongs to a
+ * customer record.
+ */
+export type ResolvedMeetingParties = {
+  personId: CrmRecordId;
+  organizationId?: CrmRecordId;
+  createdPerson: boolean;
+  createdOrganization: boolean;
+};
+
+/**
+ * Guarantees a meeting activity is attached to a real contact.
+ *
+ * The activity payload previously sent whatever IDs the form happened to hold,
+ * so booking a meeting for a new contact produced an activity attached to
+ * nobody. The contact is now always resolved — reused when selected, created
+ * otherwise.
+ *
+ * The organization is only created when the seller actually named one. A
+ * meeting must remain bookable with no customer record at all, so an absent
+ * organization is a valid outcome rather than something to fill in.
+ */
+export async function resolveMeetingParties(data: MeetingStepInput): Promise<ResolvedMeetingParties> {
+  const organizationName = data.organization?.name?.trim();
+
+  // Same protection as the deal path: reassigning an existing contact to a
+  // different organization is an edit to a record this app does not own.
+  if (
+    data.person.id &&
+    data.person.organizationId &&
+    data.organization?.id &&
+    String(data.person.organizationId) !== String(data.organization.id)
+  ) {
+    throw new ExistingRecordProtectionError(
+      "Den befintliga kontakten tillhör en annan organisation i Pipedrive. Välj kontaktens organisation eller skapa en ny kontakt; appen ändrar inte befintliga CRM-poster."
+    );
+  }
+
+  let organizationId = data.organization?.id;
+  let createdOrganization = false;
+
+  if (!organizationId && organizationName) {
+    const organization = await createOrganization({
+      name: organizationName,
+      address: data.organization?.address
+    });
+
+    organizationId = readId(organization);
+    createdOrganization = true;
+
+    if (!organizationId) {
+      throw new Error("Pipedrive returnerade inget organisations-ID.");
+    }
+  }
+
+  let personId = data.person.id;
+  let createdPerson = false;
+
+  if (!personId) {
+    try {
+      // Organization first, so a new contact is created already carrying `org_id`
+      // and needs no follow-up link call.
+      const person = await createPerson({
+        name: data.person.name,
+        email: data.person.email ? [{ value: data.person.email, primary: true }] : undefined,
+        phone: data.person.phone ? [{ value: data.person.phone, primary: true }] : undefined,
+        org_id: organizationId
+      });
+
+      personId = readId(person);
+
+      if (!personId) {
+        throw new Error("Pipedrive returnerade inget person-ID.");
+      }
+
+      createdPerson = true;
+    } catch (error) {
+      // An organization created moments ago must not be orphaned by this
+      // failure — it travels with the error so a retry reuses it.
+      throw new PartialResolutionError(error, { organizationId });
+    }
+  }
+
+  return { personId, organizationId, createdPerson, createdOrganization };
+}
+
+/** Existing CRM records are read-only from this application. */
+/** Records created before a resolution failed, so a retry can reuse them. */
+export type PartialParties = {
+  personId?: CrmRecordId;
+  organizationId?: CrmRecordId;
+};
+
+/**
+ * A resolution that failed after it had already created something.
+ *
+ * Without this the created IDs were lost: the assignment in the caller never
+ * happens when the function throws, so an organization created just before a
+ * failing person creation became invisible — and the retry created a second
+ * one. The partial result travels with the error instead.
+ */
+export class PartialResolutionError extends Error {
+  readonly status: number;
+  readonly parties: PartialParties;
+  readonly cause: unknown;
+
+  constructor(cause: unknown, parties: PartialParties) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "PartialResolutionError";
+    this.parties = parties;
+    this.cause = cause;
+    this.status = cause instanceof PipedriveApiError ? cause.status : 500;
+  }
+}
+
+export class ExistingRecordProtectionError extends Error {
+  readonly status = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ExistingRecordProtectionError";
+  }
+}
 
 /**
  * Guarantees a deal is attached to a real person and organization.
@@ -288,6 +469,18 @@ export type ResolvedDealParties = {
  * avoids a follow-up link call in the common "both are new" path.
  */
 export async function resolveDealParties(data: DealStepInput): Promise<ResolvedDealParties> {
+  // Refuse before creating anything. Reassigning an existing contact would be
+  // a broad edit to a CRM record the app does not own.
+  if (
+    data.person.id &&
+    data.person.organizationId &&
+    (!data.organization.id || String(data.person.organizationId) !== String(data.organization.id))
+  ) {
+    throw new ExistingRecordProtectionError(
+      "Den befintliga kontakten tillhör en annan organisation i Pipedrive. Välj kontaktens organisation eller skapa en ny kontakt; appen ändrar inte befintliga CRM-poster."
+    );
+  }
+
   let organizationId = data.organization.id;
   let createdOrganization = false;
 
@@ -307,27 +500,35 @@ export async function resolveDealParties(data: DealStepInput): Promise<ResolvedD
 
   let personId = data.person.id;
   let createdPerson = false;
+  let personLinkedToOrganization =
+    Boolean(personId && data.person.organizationId) &&
+    String(data.person.organizationId) === String(organizationId);
 
   if (!personId) {
-    const person = await createPerson({
-      name: data.person.name,
-      email: data.person.email ? [{ value: data.person.email, primary: true }] : undefined,
-      phone: data.person.phone ? [{ value: data.person.phone, primary: true }] : undefined,
-      org_id: organizationId
-    });
+    try {
+      const person = await createPerson({
+        name: data.person.name,
+        email: data.person.email ? [{ value: data.person.email, primary: true }] : undefined,
+        phone: data.person.phone ? [{ value: data.person.phone, primary: true }] : undefined,
+        org_id: organizationId
+      });
 
-    personId = readId(person);
-    createdPerson = true;
+      personId = readId(person);
 
-    if (!personId) {
-      throw new Error("Pipedrive returnerade inget person-ID.");
+      if (!personId) {
+        throw new Error("Pipedrive returnerade inget person-ID.");
+      }
+
+      createdPerson = true;
+      personLinkedToOrganization = true;
+    } catch (error) {
+      // The organization exists even though the person failed. Carrying its ID
+      // out with the error is what stops a retry creating a second one.
+      throw new PartialResolutionError(error, { organizationId });
     }
-  } else if (!data.person.organizationId || data.person.organizationId !== organizationId) {
-    // Existing person whose organization differs from the one on this deal.
-    await linkPersonToOrganization(personId, organizationId);
   }
 
-  return { personId, organizationId, createdPerson, createdOrganization };
+  return { personId, organizationId, createdPerson, createdOrganization, personLinkedToOrganization };
 }
 
 function readId(record: AnyRecord | null | undefined): CrmRecordId | undefined {
@@ -340,7 +541,10 @@ function readId(record: AnyRecord | null | undefined): CrmRecordId | undefined {
  * in rather than read from `data`, so the payload cannot be built with the
  * undefined form IDs that previously orphaned every deal.
  */
-export function buildDealPayload(data: DealStepInput, parties: ResolvedDealParties): PipedriveDealPayload {
+export async function buildDealPayload(
+  data: DealStepInput,
+  parties: ResolvedDealParties
+): Promise<PipedriveDealPayload> {
   const config = getPipedriveConfig();
 
   // Commercial terms live in custom fields. A missing key would drop them
@@ -348,6 +552,12 @@ export function buildDealPayload(data: DealStepInput, parties: ResolvedDealParti
   assertCustomFieldMappings(config);
 
   const customFields = config.customFields;
+  const pipelineId = data.deal.pipelineId ?? config.defaultPipelineId;
+
+  // With a pipeline chosen but no stage, the deal goes to that pipeline's first
+  // stage. A stage from the configured default could belong to another pipeline.
+  const stageId = data.deal.stageId ?? (pipelineId ? await resolveFirstStageId(pipelineId) : config.defaultStageId);
+
   const payload: PipedriveDealPayload = {
     title: data.deal.title,
     person_id: parties.personId,
@@ -355,8 +565,8 @@ export function buildDealPayload(data: DealStepInput, parties: ResolvedDealParti
     user_id: data.sellerId,
     value: data.deal.value,
     currency: data.deal.currency ?? config.defaultCurrency,
-    pipeline_id: data.deal.pipelineId ?? config.defaultPipelineId,
-    stage_id: data.deal.stageId ?? config.defaultStageId
+    pipeline_id: pipelineId,
+    stage_id: stageId
   };
 
   // Only the invoicing fields exist as custom fields in the account. The

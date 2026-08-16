@@ -27,6 +27,7 @@ const envSchema = z.object({
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
     z.string().trim().url().default("https://api.pipedrive.com/v1")
   ),
+  PIPEDRIVE_SCHEDULER_URL: optionalEnv(z.string().trim().url()),
   PIPEDRIVE_DEFAULT_PIPELINE_ID: optionalEnv(z.string().trim()),
   PIPEDRIVE_DEFAULT_STAGE_ID: optionalEnv(z.string().trim()),
   PIPEDRIVE_DEFAULT_CURRENCY: z.preprocess(

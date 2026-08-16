@@ -2,7 +2,9 @@ import { assertPipedriveToken, getPipedriveConfig } from "@/lib/config/pipedrive
 import type { PipedriveResponse } from "@/lib/pipedrive/types";
 
 type RequestOptions = {
-  method?: "GET" | "POST" | "PUT";
+  // Intentionally creation/read-only: this app must not update or delete
+  // existing CRM records. Adding PUT/PATCH/DELETE requires an explicit policy change.
+  method?: "GET" | "POST";
   query?: Record<string, string | number | undefined>;
   body?: unknown;
   formData?: FormData;
