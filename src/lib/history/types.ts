@@ -14,7 +14,12 @@ export const WORKFLOW_LABELS: Record<WorkflowKind, string> = {
 export const historyEntrySchema = z.object({
   id: z.string(),
   kind: z.enum(WORKFLOW_KINDS),
-  status: z.enum(["success", "error"]),
+  /**
+   * Did the workflow do its job? A document that was generated and delivered is
+   * a success even if attaching it to Pipedrive afterwards failed — those are
+   * separate outcomes and `warning` keeps them from being confused.
+   */
+  status: z.enum(["success", "warning", "error"]),
   /** Who ran it — from the session, never client-supplied. */
   createdBy: z.string(),
   createdAt: z.string(),
