@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { requireSession, UnauthorizedError } from "@/lib/auth/server";
-import { assertCustomFieldMappings, ConfigurationError } from "@/lib/config/pipedrive";
+import { assertCustomFieldMappings, ConfigurationError, getPipedriveConfig } from "@/lib/config/pipedrive";
 import { PipedriveApiError } from "@/lib/pipedrive/client";
 import {
   buildDealPayload,
@@ -11,6 +11,9 @@ import {
   createNote,
   createOrganization,
   createPerson,
+  DealOwnershipError,
+  ExistingRecordProtectionError,
+  PartialResolutionError,
   getCustomFieldMappings,
   getDealFields,
   getOrganizationFields,
@@ -18,15 +21,15 @@ import {
   getPipelines,
   getStages,
   getUsers,
-  linkPersonToOrganization,
   MIN_SEARCH_TERM_LENGTH,
   resolveDealParties,
+  resolveMeetingParties,
   searchDeals,
   searchOrganizations,
   searchPersons,
-  updateOrganization,
-  updatePerson,
-  type ResolvedDealParties
+  type PartialParties,
+  type ResolvedDealParties,
+  type ResolvedMeetingParties
 } from "@/lib/pipedrive/service";
 import {
   createActivitySchema,
@@ -34,12 +37,9 @@ import {
   createOrganizationSchema,
   createPersonSchema,
   dealStepSchema,
-  linkPersonOrganizationSchema,
-  meetingStepSchema,
-  updateOrganizationSchema,
-  updatePersonSchema
+  meetingStepSchema
 } from "@/lib/crm/schemas";
-import { recordHistory } from "@/lib/history/store";
+import { recordHistory, recordHistorySafely } from "@/lib/history/store";
 
 type RouteContext = {
   params: Promise<{
@@ -79,6 +79,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (operation === "deal-fields") return jsonOk(await getDealFields());
     if (operation === "person-fields") return jsonOk(await getPersonFields());
     if (operation === "organization-fields") return jsonOk(await getOrganizationFields());
+    if (operation === "scheduler-config") {
+      return jsonOk({
+        provider: "pipedrive",
+        bookingUrl: getPipedriveConfig().schedulerUrl ?? null,
+        createsActivityAfterBooking: true
+      });
+    }
 
     return jsonError(`Unknown Pipedrive GET operation: ${operation}`, 404);
   } catch (error) {
@@ -99,48 +106,65 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return jsonOk(await createPerson(createPersonSchema.parse(body)));
     }
 
-    if (operation === "persons/update") {
-      const parsed = updatePersonSchema.parse(body);
-      return jsonOk(await updatePerson(parsed.id, parsed.payload));
-    }
-
     if (operation === "organizations") {
       return jsonOk(await createOrganization(createOrganizationSchema.parse(body)));
-    }
-
-    if (operation === "organizations/update") {
-      const parsed = updateOrganizationSchema.parse(body);
-      return jsonOk(await updateOrganization(parsed.id, parsed.payload));
-    }
-
-    if (operation === "persons/link-organization") {
-      const parsed = linkPersonOrganizationSchema.parse(body);
-      return jsonOk(await linkPersonToOrganization(parsed.personId, parsed.organizationId));
     }
 
     if (operation === "activities/meeting") {
       const parsed = meetingStepSchema.parse(body);
       const customerName = parsed.organization?.name ?? parsed.person.name;
 
-      try {
-        const activity = await createActivity(buildMeetingActivityPayload(parsed));
+      let meetingParties: ResolvedMeetingParties | undefined;
 
-        await recordHistory({
+      try {
+        // The contact (and organization, when named) must exist before the
+        // activity can be attached to anything.
+        meetingParties = await resolveMeetingParties(parsed);
+
+        const activity = await createActivity(buildMeetingActivityPayload(parsed, meetingParties));
+
+        // The activity exists from here on. History is a local convenience, so
+        // its failure must never turn a completed booking into an error the
+        // seller would retry — that is how duplicate activities are created.
+        await recordHistorySafely({
           kind: "meeting",
           status: "success",
           createdBy: session.subject,
           customerName,
           summary: `${parsed.meetingType} ${parsed.date} ${parsed.time} med ${parsed.person.name}`,
           pipedriveActivityId: readRecordId(activity),
-          pipedrivePersonId: parsed.person.id,
-          pipedriveOrganizationId: parsed.organization?.id,
+          pipedrivePersonId: meetingParties.personId,
+          pipedriveOrganizationId: meetingParties.organizationId,
           payload: parsed
         });
 
-        return jsonOk(activity);
+        // The resolved IDs travel back so the wizard can reuse them instead of
+        // re-creating the same records on a later step or a re-run.
+        return jsonOk({ ...(activity as Record<string, unknown>), _parties: meetingParties });
       } catch (error) {
-        await recordFailure("meeting", session.subject, customerName, `Mötesbokning för ${parsed.person.name}`, error);
-        throw error;
+        if (error instanceof ExistingRecordProtectionError) throw error;
+
+        // Resolution may have created records before it failed; recover them so
+        // they are logged and returned rather than orphaned.
+        const partial = meetingParties ?? partialPartiesOf(error);
+
+        await recordFailure(
+          "meeting",
+          session.subject,
+          customerName,
+          `Mötesbokning för ${parsed.person.name}`,
+          error,
+          partial
+        );
+
+        // A contact may already exist even though the activity failed. Deleting
+        // it is not an option, so the IDs are returned and the wizard fills them
+        // in — a retry reuses the record rather than creating a duplicate.
+        throw new PartialRecordFailure(
+          error instanceof Error ? error.message : String(error),
+          errorStatus(error),
+          partial
+        );
       }
     }
 
@@ -156,9 +180,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
       try {
         parties = await resolveDealParties(parsed);
 
-        const deal = await createDeal(buildDealPayload(parsed, parties));
+        const deal = await createDeal(await buildDealPayload(parsed, parties));
 
-        await recordHistory({
+        // The deal exists from here on; a history failure must not present it
+        // as a failed run the seller would retry into a duplicate deal.
+        await recordHistorySafely({
           kind: "deal",
           status: "success",
           createdBy: session.subject,
@@ -174,17 +200,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
         // re-creating the same records on a retry.
         return jsonOk({ ...(deal as Record<string, unknown>), _parties: parties });
       } catch (error) {
-        await recordFailure("deal", session.subject, parsed.organization.name, parsed.deal.title, error, parties);
+        if (error instanceof ExistingRecordProtectionError) throw error;
+
+        // Resolution may have created an organization before failing on the
+        // person; recover it rather than losing the ID.
+        const partial = parties ?? partialPartiesOf(error);
+
+        await recordFailure("deal", session.subject, parsed.organization.name, parsed.deal.title, error, partial);
 
         // Person/organization may already exist in Pipedrive even though the
         // deal failed. Deleting them is not an option (the token may lack
         // permission, and removing real CRM records is worse than keeping
         // them), so the IDs are returned instead — the wizard fills them in so
         // a retry reuses the records rather than creating duplicates.
-        throw new PartialDealFailure(
+        throw new PartialRecordFailure(
           error instanceof Error ? error.message : String(error),
-          error instanceof PipedriveApiError ? error.status : 500,
-          parties
+          errorStatus(error),
+          partial
         );
       }
     }
@@ -217,7 +249,8 @@ async function recordFailure(
   customerName: string | undefined,
   summary: string,
   error: unknown,
-  parties?: ResolvedDealParties
+  // Only the IDs are logged, so the widest shape that carries them is enough.
+  parties?: PartialParties
 ) {
   // History must never mask the original failure.
   try {
@@ -243,20 +276,48 @@ class BadRequestError extends Error {
 }
 
 /**
- * A deal that failed after its person/organization were already created.
- * Carries those IDs so the client can reuse them on retry.
+ * Any workflow that failed after it had already created CRM records. Carries
+ * those IDs so the client can reuse them on retry instead of duplicating.
  */
-class PartialDealFailure extends Error {
+class PartialRecordFailure extends Error {
   readonly status: number;
-  readonly parties?: ResolvedDealParties;
+  readonly parties?: PartialParties;
 
-  constructor(message: string, status: number, parties?: ResolvedDealParties) {
+  constructor(message: string, status: number, parties?: PartialParties) {
     super(message);
-    this.name = "PartialDealFailure";
+    this.name = "PartialRecordFailure";
     this.status = status;
     this.parties = parties;
   }
 }
+
+/** Pipedrive failures keep their own status; anything else is a server fault. */
+function errorStatus(error: unknown): number {
+  if (error instanceof PartialResolutionError) return error.status;
+
+  return error instanceof PipedriveApiError ? error.status : 500;
+}
+
+/** Names the records that already exist, so the message cannot overstate them. */
+function describeCreatedRecords(parties?: PartialParties): string | undefined {
+  const created = [
+    parties?.personId !== undefined ? "Kontakten" : undefined,
+    parties?.organizationId !== undefined ? "organisationen" : undefined
+  ].filter(Boolean);
+
+  if (created.length === 0) return undefined;
+
+  const names = created.join(" och ");
+  return created.length > 1
+    ? `${names} är redan skapade i Pipedrive och`
+    : `${names} är redan skapad i Pipedrive och`;
+}
+
+/** Recovers records created before a resolution threw partway through. */
+function partialPartiesOf(error: unknown): PartialParties | undefined {
+  return error instanceof PartialResolutionError ? error.parties : undefined;
+}
+
 
 function requiredQuery(searchParams: URLSearchParams, name: string) {
   const value = searchParams.get(name);
@@ -301,13 +362,16 @@ function jsonError(error: unknown, status?: number) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
   }
 
-  if (error instanceof PartialDealFailure) {
+  if (error instanceof PartialRecordFailure) {
+    const created = describeCreatedRecords(error.parties);
+
     return NextResponse.json(
       {
         ok: false,
-        error: error.parties
-          ? `${error.message} Kontakt och organisation är redan skapade och återanvänds vid nytt försök.`
-          : error.message,
+        // Names only what was actually created — claiming both records exist
+        // when only the organization does would send the seller looking for a
+        // contact that is not there.
+        error: created ? `${error.message} ${created} återanvänds vid nytt försök.` : error.message,
         parties: error.parties
       },
       { status: error.status }
@@ -317,6 +381,15 @@ function jsonError(error: unknown, status?: number) {
   if (error instanceof ZodError) {
     const message = error.issues.map((issue) => `${issue.path.join(".") || "form"}: ${issue.message}`).join("; ");
     return NextResponse.json({ ok: false, error: message }, { status: 422 });
+  }
+
+  // A deal/organization pairing the seller has to correct, not a server fault.
+  if (error instanceof DealOwnershipError) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+  }
+
+  if (error instanceof ExistingRecordProtectionError) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
   }
 
   // Setup problems are actionable, so the message is surfaced rather than hidden
