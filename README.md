@@ -16,11 +16,20 @@ work rather than submitting into a void.
 - Mediacleaning must not create a deal.
 - Contract generation must not create a deal.
 - Only the explicit Create Deal step may create a Pipedrive deal.
-- Deal creation is blocked unless every custom field key is configured — a
-  missing key would silently drop contract values from the deal.
-- Calendar invitations are business-required, but the integration method is still TBD.
+- Deal creation is blocked unless the three Pipedrive fields the account
+  currently supports are mapped: Faktura Start, Fakturagrupp and Viktigast för
+  kunden. A missing key would otherwise silently drop those values.
+- Meeting invitations use Pipedrive Scheduler. Configure a public booking link
+  with `PIPEDRIVE_SCHEDULER_URL`; a Scheduler booking creates the Pipedrive
+  activity itself. The form's activity submission remains for an already
+  agreed date/time and must not be used as a duplicate after Scheduler booking.
 - Mediacleaning document generation must still work as a local/downloadable output even if no Pipedrive deal or organization target exists.
-- Avtalssammanstallning may appear both inside Mediacleaning and inside Contract generation; approved scope should decide whether those PDFs are separate or combined.
+- Mediacleaning combines one cancellation page per supplier and its optional
+  agreement summary in one PDF. Contract generation creates its own PDF unless
+  the seller explicitly selects the combined contract + Mediacleaning package.
+- Existing CRM people and organizations are read-only. The application exposes
+  no update or delete method and refuses to reassign an existing contact to a
+  different organization.
 - Pipedrive credentials must stay server-side.
 - Pipedrive custom fields, pipeline IDs, stage IDs, seller IDs, and technician IDs are account-specific and must not be guessed.
 
@@ -58,17 +67,41 @@ There is no database. The store exposes two functions (`listHistory`,
 
 ## Status
 
-The four workflows validate, gate access, record history, return documents, and
-attach deals to a real contact and company. Not yet production-ready — see
-`current_state.md` for the full picture. The largest remaining gaps:
+The four workflows validate, gate access, record history and preserve the rule
+that only the explicit deal step may create a deal. The current implementation:
 
-- **Deal creation is blocked by the Pipedrive account, not the code.** The API
-  token cannot create deals (403), and seven of the ten required custom deal
-  fields do not exist in the account yet. Both must be fixed on the Pipedrive
-  side before the deal workflow can run end to end.
-- **Documents are drafts, not PDFs.** `src/lib/pdf/service.ts` emits plain text
-  pending a PDF library and approved legal copy.
-- **Calendar invitations are unbuilt** pending the provider decision below.
+- creates missing deal people and organizations, reuses matching records and
+  resolves the first stage in the selected pipeline when no stage is chosen;
+- validates the documented mandatory contact, organization, invoicing, seller
+  and customer-priority fields before deal creation;
+- creates real, parseable PDF drafts for Mediacleaning and contract generation;
+- creates one cancellation page per supplier and can include the Mediacleaning
+  agreement summary in the same PDF;
+- can explicitly append a completed Mediacleaning document set to the contract
+  PDF, while keeping the two workflows separate by default;
+- exposes the configured Pipedrive Scheduler link in the meeting step;
+- uploads document PDFs to the selected deal first, otherwise the organization,
+  and creates the corresponding Pipedrive note;
+- still returns the local PDF when no CRM target exists or attachment fails.
+
+The app is not yet production-ready. The Pipedrive Scheduler link must be
+configured, the Mediacleaning wording still needs confirmation against the
+client's templates, and live deal-create permission must be confirmed in the
+Pipedrive account.
+
+## Form values and Pipedrive mappings
+
+Sellers enter contract length, contract start, monthly cost, start fee, total
+deal value, binding period and cancellation period directly in the app. These
+values are form data, not environment variables.
+
+Environment variables under `PIPEDRIVE_FIELD_*` contain only account-specific
+Pipedrive API field keys. The current account exposes writable fields for
+Faktura Start, Fakturagrupp and Viktigast för kunden, so those three values are
+written to the deal. The other commercial values remain available to the
+contract workflow and generated contract, but are not invented as Pipedrive
+custom fields. If the account later adds those fields, mappings can be added
+without moving seller-entered values into environment configuration.
 
 ## Choosing records instead of typing IDs
 
@@ -77,31 +110,48 @@ Pipedrive account. Stages are filtered by the selected pipeline, and changing
 pipeline clears the stage so the two cannot disagree. If a list cannot be loaded
 the field falls back to a plain text input, so a known ID can still be entered.
 
-Each step's lookup searches Pipedrive and lets you pick an existing person,
-organization, or deal. Picking one reuses its ID; leaving it blank creates a new
-record and links it. If a deal fails after its contact and company were created,
-the IDs come back with the error and are reused on retry, so retrying never
-duplicates records.
+Lookups search Pipedrive and let the seller reuse existing records. The deal
+step creates any missing person or organization and links both to the deal. It
+does not edit the selected records. If an existing person already belongs to a
+different organization, the submission is stopped and the seller must correct
+the selection or create a new contact. If
+deal creation fails after those records were created, their IDs are returned
+and reused on retry. Mediacleaning can use an existing deal or organization,
+explicitly create an organization without a deal, or continue with local PDF
+download only. Document steps never create a deal.
 
 ## Still Needed From Client/Pipedrive
 
-- Custom field API keys (all `PIPEDRIVE_FIELD_*` in `.env.example`). **Deal
-  creation is blocked until these are set** — by design, so contract values
-  cannot be silently lost.
+- The three custom field API keys listed in `.env.example`. Deal creation is
+  blocked until those mappings are configured.
 - ~~Pipeline and stage IDs~~ — resolved. Read live from the account; Google
   Digital Paket is pipeline `1`. Set `PIPEDRIVE_DEFAULT_PIPELINE_ID` /
   `PIPEDRIVE_DEFAULT_STAGE_ID` only if a pre-selected default is wanted.
 - ~~Seller/user IDs~~ — resolved, read live from the account. Still open:
   whether IT technicians are Pipedrive users or external contacts. Both work
   today (dropdown for users, free-text name for externals).
-- Calendar invitation decision: Pipedrive activity plus Pipedrive scheduler, Google Calendar, Microsoft 365, or another calendar provider.
-- Approved Swedish legal text for cancellation letters and contract summaries.
-- Whether Mediacleaning agreement summary and Contract generation should produce separate PDFs or a combined export in some cases.
-- Final attachment fallback order: deal, organization, person/activity, or local download only.
+- A public general-availability or specific-times link copied from Pipedrive
+  Scheduler into `PIPEDRIVE_SCHEDULER_URL`.
+- Confirmation of the client's Mediacleaning templates and final Swedish
+  cancellation wording. Until then PDFs carry a prominent `UTKAST` marker.
+- Final legal payment and termination wording for the contract before it is
+  used for signing.
+- Confirmation that the explicit contract + Mediacleaning checkbox matches the
+  client's preferred combined-document workflow.
+
+## Mediacleaning template seam
+
+The draft wording is isolated in
+`src/lib/pdf/templates/mediacleaning.ts`. An approved client version can be
+added as a new `MediacleaningTemplate` without changing PDF pagination,
+Pipedrive upload logic or the sales form. Until approval, generated documents
+remain visibly marked `UTKAST`.
 
 ## Useful Checks
 
 ```bash
 npm run typecheck
+npm test
+npm run lint
 npm run build
 ```
