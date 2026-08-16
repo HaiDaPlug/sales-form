@@ -100,6 +100,10 @@ export default async function HistoryPage({ searchParams }: PageProps) {
 
 function describeResult(entry: Awaited<ReturnType<typeof listHistory>>[number]) {
   if (entry.status === "error") return "Misslyckades";
+  // The work completed but something after it did not. The specific cause is in
+  // `errorMessage` — a note may have failed after the file uploaded fine, so
+  // this must not claim the document was never linked.
+  if (entry.status === "warning") return "Klar med varning";
   if (entry.pipedriveDealId) return `Affär ${entry.pipedriveDealId}`;
   if (entry.pipedriveActivityId) return `Aktivitet ${entry.pipedriveActivityId}`;
   if (entry.fileName) return "Dokument";

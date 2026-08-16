@@ -910,6 +910,11 @@ textarea:disabled {
   border-left-color: var(--danger);
 }
 
+/* Completed, but not linked in Pipedrive — distinct from both done and failed. */
+.history-item[data-status="warning"] {
+  border-left-color: var(--warning);
+}
+
 .history-item-top {
   display: flex;
   justify-content: space-between;
@@ -1039,6 +1044,10 @@ textarea:disabled {
 
 .history-table tbody tr[data-status="error"] {
   background: var(--danger-bg);
+}
+
+.history-table tbody tr[data-status="warning"] {
+  background: var(--warning-bg);
 }
 
 .history-table .nowrap {

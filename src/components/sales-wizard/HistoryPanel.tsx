@@ -66,9 +66,13 @@ export function HistoryPanel({ refreshToken }: { refreshToken: number }) {
               <span className="history-time">{formatTimestamp(entry.createdAt)}</span>
             </div>
             <p className="history-summary">{entry.customerName ?? entry.summary}</p>
+            {/* The reason matters more than the status word: "note failed" and
+                "nothing was linked" need different follow-up from the seller. */}
+            {entry.errorMessage && <p className="history-error">{entry.errorMessage}</p>}
             <span className="history-meta">
               {entry.createdBy}
               {entry.status === "error" ? " · misslyckades" : ""}
+              {entry.status === "warning" ? " · klar med varning" : ""}
             </span>
           </li>
         ))}
