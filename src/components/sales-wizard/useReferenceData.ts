@@ -7,6 +7,7 @@ export type ReferenceData = {
   users: ReferenceOption[];
   pipelines: ReferenceOption[];
   stages: ReferenceOption[];
+  schedulerUrl?: string;
   loading: boolean;
   /** Set when Pipedrive is unreachable or misconfigured, so steps can fall back. */
   error?: string;
@@ -31,6 +32,8 @@ export function useReferenceData(): ReferenceData {
     let cancelled = false;
 
     async function load() {
+      const schedulerPromise = fetchSchedulerUrl().catch(() => undefined);
+
       try {
         const [users, pipelines, stages] = await Promise.all([
           fetchOptions("/api/pipedrive/users"),
@@ -39,13 +42,14 @@ export function useReferenceData(): ReferenceData {
         ]);
 
         if (cancelled) return;
-        setData({ users, pipelines, stages });
+        setData({ users, pipelines, stages, schedulerUrl: await schedulerPromise });
       } catch (error) {
         if (cancelled) return;
         setData({
           users: [],
           pipelines: [],
           stages: [],
+          schedulerUrl: await schedulerPromise,
           error: error instanceof Error ? error.message : "Kunde inte hämta listor från Pipedrive"
         });
       } finally {
@@ -61,6 +65,17 @@ export function useReferenceData(): ReferenceData {
   }, []);
 
   return { ...data, loading };
+}
+
+async function fetchSchedulerUrl(): Promise<string | undefined> {
+  const response = await fetch("/api/pipedrive/scheduler-config");
+  const payload = (await response.json()) as {
+    ok: boolean;
+    data?: { bookingUrl?: string | null };
+  };
+
+  if (!response.ok || !payload.ok) return undefined;
+  return payload.data?.bookingUrl ?? undefined;
 }
 
 async function fetchOptions(endpoint: string): Promise<ReferenceOption[]> {

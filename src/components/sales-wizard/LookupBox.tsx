@@ -12,6 +12,23 @@ import type { SearchHit } from "@/lib/pipedrive/types";
 const MAX_SEARCH_RESULTS = 10;
 
 /**
+ * A field where the seller's typed value and the linked Pipedrive record
+ * disagree — e.g. a contact found by email whose phone number has changed.
+ * Surfaced as an explicit choice rather than silently overwriting either side,
+ * because both values may be correct and only the seller knows which.
+ */
+export type FieldConflict = {
+  field: "phone" | "email";
+  label: string;
+  /** What the seller typed in this session. */
+  enteredValue: string;
+  /** What Pipedrive currently holds. */
+  existingValue: string;
+};
+
+export type ConflictChoice = "keepExisting" | "useEntered";
+
+/**
  * Pipedrive record search.
  *
  * Results are selectable rows: picking one writes the record's real ID into the
@@ -23,7 +40,9 @@ export function LookupBox({
   endpoint,
   onSelect,
   selectedLabel,
-  onClear
+  onClear,
+  conflicts,
+  onResolveConflict
 }: {
   title: string;
   endpoint: string;
@@ -31,6 +50,9 @@ export function LookupBox({
   /** Shown when a record is currently selected. */
   selectedLabel?: string;
   onClear?: () => void;
+  /** Differences between the typed values and the linked record (S06). */
+  conflicts?: FieldConflict[];
+  onResolveConflict?: (conflict: FieldConflict, choice: ConflictChoice) => void;
 }) {
   const [term, setTerm] = useState("");
   const [state, setState] = useState<SubmitState>({ status: "idle" });
@@ -73,14 +95,49 @@ export function LookupBox({
       <label htmlFor={`lookup-${endpoint}`}>{title}</label>
 
       {selectedLabel ? (
-        <div className="lookup-selected">
-          <span className="lookup-selected-name">✓ {selectedLabel}</span>
-          {onClear && (
-            <button className="link-button" type="button" onClick={onClear}>
-              Koppla loss
-            </button>
-          )}
-        </div>
+        <>
+          <div className="lookup-selected">
+            <span className="lookup-selected-name">✓ {selectedLabel}</span>
+            {onClear && (
+              <button className="link-button" type="button" onClick={onClear}>
+                Koppla loss
+              </button>
+            )}
+          </div>
+
+          {conflicts?.map((conflict) => (
+            <div className="notice warning" key={conflict.field} role="alert">
+              <p>
+                Kontakten finns redan, men {conflict.label.toLowerCase()} skiljer sig. Välj vilket värde som ska
+                användas i det här formuläret.
+              </p>
+              {/* These buttons choose what this run uses. They do not write to
+                  Pipedrive — the app has no controlled update operation yet, and
+                  saying "uppdatera" would tell the seller the CRM was corrected
+                  when it was not. */}
+              <p className="field-hint">
+                Valet gäller endast detta formulär. Kontaktuppgifterna i Pipedrive ändras inte — rätta dem i
+                Pipedrive om de är felaktiga.
+              </p>
+              <div className="button-group">
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => onResolveConflict?.(conflict, "keepExisting")}
+                >
+                  Använd Pipedrives värde: {conflict.existingValue}
+                </button>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => onResolveConflict?.(conflict, "useEntered")}
+                >
+                  Använd det du angav: {conflict.enteredValue}
+                </button>
+              </div>
+            </div>
+          ))}
+        </>
       ) : (
         <>
           <div className="lookup-row">

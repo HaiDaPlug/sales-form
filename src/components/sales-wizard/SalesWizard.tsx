@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import type { ZodSchema } from "zod";
 import {
-  contractStepSchema,
+  contractDocumentRequestSchema,
   dealStepSchema,
   mediacleaningStepSchema,
   meetingStepSchema
@@ -33,7 +33,7 @@ const stepKinds: WorkflowKind[] = ["meeting", "deal", "mediacleaning", "contract
 
 const initialMeeting: MeetingStepData = {
   person: { name: "", phone: "", phoneType: "mobile", email: "", emailType: "work" },
-  organization: { name: "", website: "", address: "", city: "", organizationNumber: "" },
+  organization: { name: "", customerType: "company", website: "", address: "", city: "", organizationNumber: "" },
   meetingType: "IT-genomgång",
   agenda: "",
   technicianNotes: "",
@@ -49,7 +49,7 @@ const initialMeeting: MeetingStepData = {
 
 const initialDeal: DealStepData = {
   person: { name: "", phone: "", phoneType: "mobile", email: "", emailType: "work" },
-  organization: { name: "", website: "", address: "", city: "", organizationNumber: "" },
+  organization: { name: "", customerType: "company", website: "", address: "", city: "", organizationNumber: "" },
   deal: { title: "", value: 0, currency: "SEK", pipelineId: "", stageId: "" },
   sellerId: "",
   viktigastForKunden: "",
@@ -73,7 +73,8 @@ const initialMediacleaning: MediacleaningStepData = {
   suppliers: [],
   internalComment: "",
   organizationId: "",
-  dealId: ""
+  dealId: "",
+  createOrganization: false
 };
 
 const initialContract: ContractStepData = {
@@ -87,6 +88,7 @@ const initialContract: ContractStepData = {
   paymentInterval: "monthly",
   bindingPeriodMonths: 12,
   includedServices: ["Digital Kontakt"],
+  includeMediacleaningDocuments: false,
   organizationId: "",
   dealId: ""
 };
@@ -151,10 +153,34 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     if (index === 1) {
       setDeal((current) => ({
         ...current,
-        person: { ...current.person, ...meeting.person },
-        organization: { ...current.organization, ...meeting.organization },
-        sellerId: current.sellerId || meeting.sellerId,
-        viktigastForKunden: current.viktigastForKunden || meeting.internalComment,
+        person: {
+          ...current.person,
+          id: current.person.id ?? meeting.person.id,
+          name: current.person.name || meeting.person.name,
+          // Meeting fields are optional but the deal step requires them, so a
+          // missing value carries forward as an empty field for the seller to
+          // fill in — never as `undefined`, which the deal schema rejects.
+          phone: current.person.phone || meeting.person.phone || "",
+          phoneType: current.person.phoneType || meeting.person.phoneType,
+          email: current.person.email || meeting.person.email || "",
+          emailType: current.person.emailType || meeting.person.emailType,
+          organizationId: current.person.organizationId ?? meeting.person.organizationId
+        },
+        organization: {
+          ...current.organization,
+          id: current.organization.id ?? meeting.organization?.id,
+          name: current.organization.name || meeting.organization?.name || "",
+          customerType: current.organization.customerType || meeting.organization?.customerType,
+          website: current.organization.website || meeting.organization?.website || "",
+          address: current.organization.address || meeting.organization?.address || "",
+          city: current.organization.city || meeting.organization?.city || "",
+          organizationNumber:
+            current.organization.organizationNumber || meeting.organization?.organizationNumber || ""
+        },
+        sellerId: current.sellerId || meeting.sellerId || "",
+        viktigastForKunden:
+          current.viktigastForKunden ||
+          [meeting.technicianNotes, meeting.internalComment].filter(Boolean).join("\n\n"),
         deal: {
           ...current.deal,
           title: current.deal.title || `${meeting.organization?.name || meeting.person.name} - Digital Kontakt`
@@ -175,13 +201,17 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
 
     if (index === 3) {
+      const sellerId = String(deal.sellerId ?? meeting.sellerId ?? "");
+      const sellerName = reference.users.find((user) => String(user.id) === sellerId)?.name;
+
       setContract((current) => ({
         ...current,
         companyName: current.companyName || deal.organization.name || mediacleaning.companyName,
         organizationNumber: current.organizationNumber || deal.organization.organizationNumber || mediacleaning.organizationNumber,
         signerName: current.signerName || deal.person.name || meeting.person.name,
         address: current.address || deal.organization.address || mediacleaning.address,
-        sellerId: current.sellerId || String(deal.sellerId ?? meeting.sellerId ?? ""),
+        sellerId: current.sellerId || sellerId,
+        sellerName: current.sellerName || sellerName || "",
         price: current.price || deal.monthlyCost || deal.deal.value || 0,
         bindingPeriodMonths: current.bindingPeriodMonths || deal.bindingPeriodMonths || 12,
         organizationId: current.organizationId || String(deal.organization.id ?? mediacleaning.organizationId ?? ""),
@@ -206,11 +236,26 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
 
     if (activeStep === 3) {
-      await validateAndSubmit(contractStepSchema, contract, "/api/pdf/contract", "contract");
+      await validateAndSubmit(
+        contractDocumentRequestSchema,
+        {
+          contract,
+          mediacleaning: contract.includeMediacleaningDocuments ? mediacleaning : undefined
+        },
+        "/api/pdf/contract",
+        "contract",
+        contract
+      );
     }
   }
 
-  async function validateAndSubmit(schema: ZodSchema, value: unknown, endpoint: string, key: WorkflowKind) {
+  async function validateAndSubmit(
+    schema: ZodSchema,
+    value: unknown,
+    endpoint: string,
+    key: WorkflowKind,
+    storedValue?: unknown
+  ) {
     // Guard against a second run creating a duplicate CRM record.
     if (stepResults[key] || submitState.status === "loading") return;
 
@@ -221,7 +266,10 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       return;
     }
 
-    setWizardData((current) => ({ ...current, [key]: parsed.data as WizardData[typeof key] }));
+    setWizardData((current) => ({
+      ...current,
+      [key]: (storedValue ?? parsed.data) as WizardData[typeof key]
+    }));
     setSubmitState({ status: "loading", message: "Skickar..." });
 
     try {
@@ -264,13 +312,20 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       ok: boolean;
       error?: string;
       data?: unknown;
-      parties?: { personId?: CrmRecordId; organizationId?: CrmRecordId };
+      parties?: {
+        personId?: CrmRecordId;
+        organizationId?: CrmRecordId;
+        personLinkedToOrganization?: boolean;
+      };
     };
 
     if (!response.ok || !result.ok) {
-      // A deal can fail after its person/organization were created. Keep those
-      // IDs so retrying reuses the records instead of duplicating them.
-      if (result.parties) applyResolvedParties(result.parties);
+      // A deal or meeting can fail after its person/organization were created.
+      // Keep those IDs so retrying reuses the records instead of duplicating them.
+      if (result.parties) {
+        applyResolvedParties(result.parties);
+        if (key === "meeting") applyMeetingParties(result.parties);
+      }
 
       throw new Error(result.error ?? "Något gick fel");
     }
@@ -278,13 +333,31 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     const recordId = readRecordId(result.data);
 
     if (key === "meeting") {
+      // The server resolved (and possibly created) the contact and, when named,
+      // the organization. Storing their IDs means the deal step reuses those
+      // records instead of creating a second copy of the same customer.
+      const parties = (result.data as {
+        _parties?: { personId?: CrmRecordId; organizationId?: CrmRecordId };
+      })?._parties;
+
+      if (parties) {
+        applyResolvedParties(parties);
+        applyMeetingParties(parties);
+      }
+
       return recordId ? `Mötet är bokat i Pipedrive (aktivitet ${recordId}).` : "Mötet är bokat i Pipedrive.";
     }
 
     if (key === "deal" && recordId !== undefined) {
       // The server resolved (and possibly created) the person and organization.
       // Storing their IDs means a re-run reuses them instead of duplicating.
-      const parties = (result.data as { _parties?: { personId?: CrmRecordId; organizationId?: CrmRecordId } })?._parties;
+      const parties = (result.data as {
+        _parties?: {
+          personId?: CrmRecordId;
+          organizationId?: CrmRecordId;
+          personLinkedToOrganization?: boolean;
+        };
+      })?._parties;
 
       if (parties) applyResolvedParties(parties);
 
@@ -303,13 +376,19 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
    * on both success and failure, so a retry after a partial failure reuses the
    * records already created in Pipedrive.
    */
-  function applyResolvedParties(parties: { personId?: CrmRecordId; organizationId?: CrmRecordId }) {
+  function applyResolvedParties(parties: {
+    personId?: CrmRecordId;
+    organizationId?: CrmRecordId;
+    personLinkedToOrganization?: boolean;
+  }) {
     setDeal((current) => ({
       ...current,
       person: {
         ...current.person,
         id: parties.personId ?? current.person.id,
-        organizationId: parties.organizationId ?? current.person.organizationId
+        organizationId: parties.personLinkedToOrganization
+          ? parties.organizationId ?? current.person.organizationId
+          : current.person.organizationId
       },
       organization: { ...current.organization, id: parties.organizationId ?? current.organization.id }
     }));
@@ -321,6 +400,24 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
   }
 
+  /**
+   * Writes the contact and organization the meeting step resolved back into
+   * that step, so re-running it reuses those records rather than creating a
+   * second copy of the same customer.
+   */
+  function applyMeetingParties(parties: { personId?: CrmRecordId; organizationId?: CrmRecordId }) {
+    setMeeting((current) => ({
+      ...current,
+      person: {
+        ...current.person,
+        id: parties.personId ?? current.person.id,
+        // A person created here carries the organization it was created with.
+        organizationId: parties.organizationId ?? current.person.organizationId
+      },
+      organization: { ...current.organization, id: parties.organizationId ?? current.organization?.id }
+    }));
+  }
+
   /** Document steps stream the file back — hand it straight to the browser. */
   async function handleDocumentResponse(response: Response): Promise<string> {
     if (!response.ok) {
@@ -328,10 +425,27 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       throw new Error(result?.error ?? "Kunde inte skapa dokumentet");
     }
 
-    const fileName = response.headers.get("X-Document-File-Name") ?? "dokument.txt";
+    const fileName = response.headers.get("X-Document-File-Name") ?? "dokument.pdf";
     downloadBlob(await response.blob(), fileName);
 
-    return `Utkast skapat och nedladdat: ${fileName}. Godkänd avtalstext saknas fortfarande.`;
+    // An organization created during upload is reused by the remaining steps.
+    const createdOrganizationId = response.headers.get("X-Attachment-Created-Organization-Id");
+
+    if (createdOrganizationId) {
+      applyResolvedParties({ organizationId: createdOrganizationId });
+    }
+
+    // The document exists either way; the attachment is reported separately so
+    // a CRM failure does not read as a failure to produce the document.
+    const warning = response.headers.get("X-Attachment-Warning");
+
+    if (warning) {
+      return `Utkast skapat och nedladdat: ${fileName}. ${decodeURIComponent(warning)}`;
+    }
+
+    return `Utkast skapat och nedladdat: ${fileName} (${describeAttachment(
+      response.headers.get("X-Attachment-Target")
+    )}). Godkänd avtalstext saknas fortfarande.`;
   }
 
   /** Lets a seller deliberately re-run a completed step. */
@@ -409,7 +523,14 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
             {activeStep === 2 && (
               <MediacleaningStep data={mediacleaning} onChange={setMediacleaning} reference={reference} />
             )}
-            {activeStep === 3 && <ContractStep data={contract} onChange={setContract} reference={reference} />}
+            {activeStep === 3 && (
+              <ContractStep
+                data={contract}
+                onChange={setContract}
+                reference={reference}
+                mediacleaningReady={mediacleaningStepSchema.safeParse(mediacleaning).success}
+              />
+            )}
 
             {errors.length > 0 && (
               <div className="errors" role="alert">
@@ -492,6 +613,13 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       </section>
     </main>
   );
+}
+
+function describeAttachment(target: string | null): string {
+  if (target === "deal") return "kopplat till affären";
+  if (target === "organization") return "kopplat till organisationen";
+
+  return "endast nedladdat";
 }
 
 function formatTimestamp(value: string) {

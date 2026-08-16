@@ -1,16 +1,62 @@
-import { FormSection, ReferenceSelect, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
-import { LookupBox } from "@/components/sales-wizard/LookupBox";
+import { useState } from "react";
+import { CheckLabel, FormSection, ReferenceSelect, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import { LookupBox, type ConflictChoice, type FieldConflict } from "@/components/sales-wizard/LookupBox";
+import { findPersonConflicts } from "@/components/sales-wizard/utils";
 import type { MeetingStepData } from "@/lib/crm/types";
 
 export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStepData>) {
+  // Differences between the typed contact details and the linked record. Held
+  // in the step rather than the wizard: they are resolved here and never submitted.
+  const [conflicts, setConflicts] = useState<FieldConflict[]>([]);
+
+  const isIndividual = data.organization?.customerType === "individual";
+
+  function resolveConflict(conflict: FieldConflict, choice: ConflictChoice) {
+    // "Keep existing" already matches what the lookup wrote into the field, so
+    // only "use entered" changes anything.
+    if (choice === "useEntered") {
+      onChange({ ...data, person: { ...data.person, [conflict.field]: conflict.enteredValue } });
+    }
+
+    setConflicts((current) => current.filter((item) => item.field !== conflict.field));
+  }
+
   return (
     <>
+      <section className="section">
+        <h2 className="section-title">Pipedrive Scheduler</h2>
+        {reference.schedulerUrl ? (
+          <>
+            <p className="hint">
+              Dela Scheduler-länken när kunden ska välja tid. När kunden bokar skapar Pipedrive aktiviteten och
+              skickar bekräftelsen; skapa då inte en extra aktivitet med formuläret nedan.
+            </p>
+            <a className="link-button" href={reference.schedulerUrl} target="_blank" rel="noreferrer">
+              Öppna Pipedrive Scheduler
+            </a>
+          </>
+        ) : (
+          <p className="hint">
+            Ingen Scheduler-länk är konfigurerad. Kopiera en delad länk från Pipedrive till
+            PIPEDRIVE_SCHEDULER_URL.
+          </p>
+        )}
+      </section>
       <LookupBox
         title="Koppla befintlig person"
         endpoint="/api/pipedrive/persons/search"
         selectedLabel={data.person.id ? `${data.person.name} (ID ${data.person.id})` : undefined}
-        onClear={() => onChange({ ...data, person: { ...data.person, id: undefined, organizationId: undefined } })}
-        onSelect={(hit) =>
+        conflicts={conflicts}
+        onResolveConflict={resolveConflict}
+        onClear={() => {
+          setConflicts([]);
+          onChange({ ...data, person: { ...data.person, id: undefined, organizationId: undefined } });
+        }}
+        onSelect={(hit) => {
+          // Recorded before the record's values overwrite the typed ones, so the
+          // seller can still choose to keep what they entered.
+          setConflicts(findPersonConflicts(data.person, hit));
+
           onChange({
             ...data,
             person: {
@@ -24,8 +70,8 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
             organization: hit.organizationName
               ? { ...data.organization, id: hit.organizationId, name: hit.organizationName }
               : data.organization
-          })
-        }
+          });
+        }}
       />
       <LookupBox
         title="Koppla befintlig organisation"
@@ -45,9 +91,33 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
         <TextField label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <TextField label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
         <TextField
-          label="Organisation"
+          label={isIndividual ? "Kundnamn" : "Organisation"}
           value={data.organization?.name}
           onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
+        />
+        <div className="field full">
+          <CheckLabel
+            label="Privatperson eller enskild firma (personnummer används som organisationsnummer)"
+            checked={isIndividual}
+            onChange={(checked) =>
+              onChange({
+                ...data,
+                organization: { ...data.organization, customerType: checked ? "individual" : "company" }
+              })
+            }
+          />
+        </div>
+        <TextField
+          label={isIndividual ? "Personnummer" : "Organisationsnummer"}
+          value={data.organization?.organizationNumber}
+          onChange={(organizationNumber) =>
+            onChange({ ...data, organization: { ...data.organization, organizationNumber } })
+          }
+        />
+        <TextField
+          label="Adress"
+          value={data.organization?.address}
+          onChange={(address) => onChange({ ...data, organization: { ...data.organization, address } })}
         />
       </FormSection>
 

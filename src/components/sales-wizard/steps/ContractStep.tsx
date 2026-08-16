@@ -1,9 +1,56 @@
-import { FormSection, ReferenceSelect, SelectField, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import {
+  CheckLabel,
+  FormSection,
+  ReferenceSelect,
+  SelectField,
+  TextArea,
+  TextField,
+  type StepProps
+} from "@/components/sales-wizard/fields";
+import { LookupBox } from "@/components/sales-wizard/LookupBox";
 import type { ContractStepData } from "@/lib/crm/types";
 
-export function ContractStep({ data, onChange, reference }: StepProps<ContractStepData>) {
+export function ContractStep({
+  data,
+  onChange,
+  reference,
+  mediacleaningReady
+}: StepProps<ContractStepData> & { mediacleaningReady: boolean }) {
   return (
     <>
+      <LookupBox
+        title="Koppla befintlig organisation"
+        endpoint="/api/pipedrive/organizations/search"
+        selectedLabel={data.organizationId ? `Organisation ${data.organizationId}` : undefined}
+        onClear={() => onChange({ ...data, organizationId: "", dealId: "" })}
+        onSelect={(hit) =>
+          onChange({
+            ...data,
+            organizationId: hit.id,
+            dealId: "",
+            companyName: data.companyName || hit.name,
+            address: data.address || hit.address || ""
+          })
+        }
+      />
+      <LookupBox
+        title="Koppla befintlig affär för uppladdning"
+        endpoint="/api/pipedrive/deals/search"
+        selectedLabel={data.dealId ? `Affär ${data.dealId}` : undefined}
+        onClear={() => onChange({ ...data, dealId: "" })}
+        onSelect={(hit) =>
+          onChange({
+            ...data,
+            dealId: hit.id,
+            organizationId: hit.organizationId ?? data.organizationId,
+            companyName: data.companyName || hit.organizationName || ""
+          })
+        }
+      />
+      <p className="hint">
+        PDF och anteckning kopplas i första hand till vald affär, annars till vald organisation.
+      </p>
+
       <FormSection title="Avtal">
         <TextField label="Företagsnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
         <TextField label="Organisationsnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
@@ -26,18 +73,35 @@ export function ContractStep({ data, onChange, reference }: StepProps<ContractSt
         <SelectField
           label="Betalningsintervall"
           value={data.paymentInterval}
-          options={["monthly", "quarterly", "yearly"]}
+          options={[
+            { value: "monthly", label: "Månadsvis" },
+            { value: "quarterly", label: "Kvartalsvis" },
+            { value: "semiannual", label: "Var 6:e månad / halvårsvis" }
+          ]}
           onChange={(paymentInterval) => onChange({ ...data, paymentInterval: paymentInterval as ContractStepData["paymentInterval"] })}
         />
         <TextField label="Bindningstid månader" type="number" value={String(data.bindingPeriodMonths)} onChange={(bindingPeriodMonths) => onChange({ ...data, bindingPeriodMonths: Number(bindingPeriodMonths) })} />
-        <TextField label="Pipedrive organisation ID" value={String(data.organizationId ?? "")} onChange={(organizationId) => onChange({ ...data, organizationId })} />
-        <TextField label="Pipedrive affär ID" value={String(data.dealId ?? "")} onChange={(dealId) => onChange({ ...data, dealId })} />
         <TextArea
           className="full"
           label="Inkluderade tjänster, en per rad"
           value={data.includedServices.join("\n")}
           onChange={(value) => onChange({ ...data, includedServices: value.split("\n").map((item) => item.trim()).filter(Boolean) })}
         />
+        <div className="field full">
+          <CheckLabel
+            label="Lägg uttryckligen till Mediacleaning-dokumenten i samma PDF"
+            checked={Boolean(data.includeMediacleaningDocuments)}
+            disabled={!mediacleaningReady}
+            onChange={(includeMediacleaningDocuments) =>
+              onChange({ ...data, includeMediacleaningDocuments })
+            }
+          />
+          <span className="field-hint">
+            {mediacleaningReady
+              ? "Valet är frivilligt. Utan markering skapas endast avtalet."
+              : "Slutför Mediacleaning-steget först för att kunna kombinera dokumenten."}
+          </span>
+        </div>
       </FormSection>
     </>
   );
