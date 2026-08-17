@@ -95,9 +95,46 @@ export const organizationSchema = z.object({
   organizationNumber: optionalIdentityNumber
 });
 
+/**
+ * `name` may be blank here, unlike on a deal. The wizard always sends an
+ * organization object with every field initialized to `""`, so `.partial()`
+ * alone is not enough — it makes the key optional but still runs
+ * `requiredText` on a name that is present and blank, failing a meeting booked
+ * from contact details alone (S01).
+ */
+const meetingOrganizationSchema = organizationSchema.partial().extend({
+  name: optionalText
+});
+
+/**
+ * Drops an organization the seller never filled in.
+ *
+ * Applied after parsing rather than through `z.preprocess`, which widens its
+ * input to `unknown` and would erase the shape the wizard's organization fields
+ * are edited through (`z.input<typeof meetingStepSchema>` feeds
+ * `MeetingStepData`).
+ *
+ * Returning `undefined` — rather than an object of empty strings — is what
+ * keeps `parsed.organization?.name ?? parsed.person.name` in the meeting route
+ * from logging a blank customer name, and mirrors `resolveMeetingParties`,
+ * which already treats a blank name as "no organization".
+ */
+const optionalOrganization = meetingOrganizationSchema.optional().transform((organization) => {
+  if (!organization) return undefined;
+
+  // `customerType` is excluded deliberately: it is a UI mode with a default
+  // ("company"), not something the seller entered, so it must not by itself
+  // make an otherwise empty organization look filled in.
+  const hasContent = Object.entries(organization).some(
+    ([key, field]) => key !== "customerType" && field !== undefined && String(field).trim() !== ""
+  );
+
+  return hasContent ? organization : undefined;
+});
+
 export const meetingStepSchema = z.object({
   person: personSchema,
-  organization: organizationSchema.partial().optional(),
+  organization: optionalOrganization,
   meetingType: requiredText("Mötestyp"),
   agenda: requiredText("Agenda"),
   technicianNotes: requiredText("Anteckningar till IT-tekniker"),

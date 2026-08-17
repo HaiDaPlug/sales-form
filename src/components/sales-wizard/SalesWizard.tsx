@@ -10,88 +10,24 @@ import {
   mediacleaningStepSchema,
   meetingStepSchema
 } from "@/lib/crm/schemas";
-import type {
-  ContractStepData,
-  CrmRecordId,
-  DealStepData,
-  MediacleaningStepData,
-  MeetingStepData,
-  SubmitState,
-  WizardData
-} from "@/lib/crm/types";
+import type { CrmRecordId, SubmitState, WizardData } from "@/lib/crm/types";
 import type { WorkflowKind } from "@/lib/history/types";
 import { ContractStep } from "@/components/sales-wizard/steps/ContractStep";
 import { DealStep } from "@/components/sales-wizard/steps/DealStep";
 import { MediacleaningStep } from "@/components/sales-wizard/steps/MediacleaningStep";
 import { MeetingStep } from "@/components/sales-wizard/steps/MeetingStep";
 import { HistoryPanel } from "@/components/sales-wizard/HistoryPanel";
+import {
+  initialContract,
+  initialDeal,
+  initialMediacleaning,
+  initialMeeting
+} from "@/components/sales-wizard/initialState";
 import { useReferenceData } from "@/components/sales-wizard/useReferenceData";
 import { downloadBlob, formatZodErrors, readRecordId } from "@/components/sales-wizard/utils";
 
 const steps = ["Mötesbokning", "Skapa affär", "Mediacleaning", "Avtalsgenerering"];
 const stepKinds: WorkflowKind[] = ["meeting", "deal", "mediacleaning", "contract"];
-
-const initialMeeting: MeetingStepData = {
-  person: { name: "", phone: "", phoneType: "mobile", email: "", emailType: "work" },
-  organization: { name: "", customerType: "company", website: "", address: "", city: "", organizationNumber: "" },
-  meetingType: "IT-genomgång",
-  agenda: "",
-  technicianNotes: "",
-  internalComment: "",
-  sellerId: "",
-  technicianId: "",
-  technicianName: "",
-  date: "",
-  time: "",
-  durationMinutes: 60,
-  locationOrLink: ""
-};
-
-const initialDeal: DealStepData = {
-  person: { name: "", phone: "", phoneType: "mobile", email: "", emailType: "work" },
-  organization: { name: "", customerType: "company", website: "", address: "", city: "", organizationNumber: "" },
-  deal: { title: "", value: 0, currency: "SEK", pipelineId: "", stageId: "" },
-  sellerId: "",
-  viktigastForKunden: "",
-  fakturaStart: "",
-  fakturagrupp: "",
-  contractLengthMonths: 12,
-  contractStartDate: "",
-  monthlyCost: 0,
-  startFee: 0,
-  totalDealValue: 0,
-  bindingPeriodMonths: 12,
-  cancellationPeriodMonths: 3
-};
-
-const initialMediacleaning: MediacleaningStepData = {
-  companyName: "",
-  organizationNumber: "",
-  address: "",
-  city: "",
-  documentTypes: [],
-  suppliers: [],
-  internalComment: "",
-  organizationId: "",
-  dealId: "",
-  createOrganization: false
-};
-
-const initialContract: ContractStepData = {
-  companyName: "",
-  organizationNumber: "",
-  signerName: "",
-  address: "",
-  sellerId: "",
-  sellerName: "",
-  price: 0,
-  paymentInterval: "monthly",
-  bindingPeriodMonths: 12,
-  includedServices: ["Digital Kontakt"],
-  includeMediacleaningDocuments: false,
-  organizationId: "",
-  dealId: ""
-};
 
 /** Per-step submit results, so a completed step cannot be run twice by accident. */
 type StepResult = {

@@ -72,12 +72,49 @@ function contract(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The organization exactly as the wizard initializes it: present, but entirely
+ * blank. Tests that omit the key instead test a shape the UI never produces.
+ */
+const BLANK_WIZARD_ORGANIZATION = {
+  name: "",
+  customerType: "company",
+  website: "",
+  address: "",
+  city: "",
+  organizationNumber: ""
+};
+
 /** S01 — a meeting can be booked with contact details only. */
 describe("meetingStepSchema (S01, S04)", () => {
   it("accepts a meeting with no organization at all", () => {
     const result = meetingStepSchema.safeParse(meeting());
 
     expect(result.success).toBe(true);
+  });
+
+  it("accepts the blank organization the wizard always sends (S01)", () => {
+    const result = meetingStepSchema.safeParse(meeting({ organization: BLANK_WIZARD_ORGANIZATION }));
+
+    expect(result.success).toBe(true);
+  });
+
+  it("drops a blank organization rather than passing empty strings on (S01)", () => {
+    const result = meetingStepSchema.safeParse(meeting({ organization: BLANK_WIZARD_ORGANIZATION }));
+
+    // The service layer treats a blank name as "no organization"; the parsed
+    // value must say the same thing instead of relying on that second check.
+    expect(result.success && result.data.organization).toBeUndefined();
+  });
+
+  it("still validates an organization the seller partly filled in", () => {
+    // A typo'd entry must not be silently discarded as "blank" — only a wholly
+    // empty object counts as no organization.
+    const result = meetingStepSchema.safeParse(
+      meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, organizationNumber: "inte-ett-nummer" } })
+    );
+
+    expect(result.success).toBe(false);
   });
 
   it("accepts a personnummer in the organization identity field", () => {
