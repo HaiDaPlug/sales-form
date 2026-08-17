@@ -55,19 +55,36 @@ export async function createPerson(payload: PipedrivePersonPayload) {
   });
 }
 
+/**
+ * Organization search, including the identity number.
+ *
+ * `custom_fields` is what makes an organisationsnummer or personnummer findable
+ * — the identity the acceptance scenarios lean on hardest for deduplication.
+ * Searching `name,address` alone returns nothing for an org number, because it
+ * is a custom field in this account rather than a native one. Verified against
+ * the live account: a known org number returns one hit with `custom_fields`
+ * included and zero without it.
+ */
 export async function searchOrganizations(term: string): Promise<SearchHit[]> {
   const envelope = await pipedriveRequest<PipedriveSearchEnvelope>("/organizations/search", {
-    query: { term, fields: "name,address", limit: MAX_SEARCH_RESULTS }
+    query: { term, fields: "name,address,custom_fields", limit: MAX_SEARCH_RESULTS }
   });
+
+  const { organizationNumber: organizationNumberKey } = getPipedriveConfig().organizationFields;
 
   return readSearchItems(envelope).map((item) => {
     const address = asString(item.address);
+    const organizationNumber = organizationNumberKey ? asString(item[organizationNumberKey]) : undefined;
 
     return {
       id: asRecordId(item.id),
       name: asString(item.name) ?? "Namnlös organisation",
-      detail: address,
-      address
+      // Shown under the name so the seller can tell apart two records with
+      // similar names — the identity number is the thing that distinguishes
+      // them.
+      detail: [organizationNumber, address].filter(Boolean).join(" · ") || undefined,
+      address,
+      organizationNumber
     };
   });
 }
@@ -77,6 +94,62 @@ export async function createOrganization(payload: PipedriveOrganizationPayload) 
     method: "POST",
     body: payload
   });
+}
+
+/** The customer details an organization is created from, in any workflow. */
+export type OrganizationDetails = {
+  name: string;
+  address?: string;
+  /** Appended to the address: the account has no editable city field. */
+  city?: string;
+  website?: string;
+  /** Organisationsnummer or personnummer, already normalized by the schema. */
+  organizationNumber?: string;
+};
+
+/**
+ * Builds the organization payload, including the account's custom fields.
+ *
+ * Every creation path goes through this, so identity cannot reach Pipedrive
+ * from one workflow and be dropped by another. Previously each caller passed
+ * `{ name, address }` inline and the organisationsnummer — mandatory on the
+ * deal form, and the strongest deduplication key the scenarios have — was
+ * never stored at all.
+ *
+ * An unmapped custom field is skipped rather than fatal. These keys are
+ * account-specific, and a deployment that has not configured them must still
+ * be able to book meetings and create deals.
+ */
+export function buildOrganizationPayload(details: OrganizationDetails): PipedriveOrganizationPayload {
+  const fields = getPipedriveConfig().organizationFields;
+
+  const payload: PipedriveOrganizationPayload = {
+    name: details.name,
+    // Pipedrive resolves one address string into its own components, so the
+    // city is folded in rather than sent separately — `address_locality` is
+    // derived and read-only.
+    address: joinAddress(details.address, details.city)
+  };
+
+  assignOrganizationField(payload, fields.organizationNumber, details.organizationNumber);
+  assignOrganizationField(payload, fields.website, details.website);
+
+  return payload;
+}
+
+/** Keeps "Storgatan 1" and "Stockholm" from becoming "Storgatan 1, " or ", Stockholm". */
+function joinAddress(address?: string, city?: string): string | undefined {
+  return [address?.trim(), city?.trim()].filter(Boolean).join(", ") || undefined;
+}
+
+function assignOrganizationField(
+  payload: PipedriveOrganizationPayload,
+  fieldKey: string | undefined,
+  value: string | undefined
+) {
+  if (fieldKey && value !== undefined && value.trim() !== "") {
+    payload[fieldKey] = value.trim();
+  }
 }
 
 export async function searchDeals(
@@ -375,10 +448,15 @@ export async function resolveMeetingParties(data: MeetingStepInput): Promise<Res
   let createdOrganization = false;
 
   if (!organizationId && organizationName) {
-    const organization = await createOrganization({
-      name: organizationName,
-      address: data.organization?.address
-    });
+    const organization = await createOrganization(
+      buildOrganizationPayload({
+        name: organizationName,
+        address: data.organization?.address,
+        city: data.organization?.city,
+        website: data.organization?.website,
+        organizationNumber: data.organization?.organizationNumber
+      })
+    );
 
     organizationId = readId(organization);
     createdOrganization = true;
@@ -485,10 +563,15 @@ export async function resolveDealParties(data: DealStepInput): Promise<ResolvedD
   let createdOrganization = false;
 
   if (!organizationId) {
-    const organization = await createOrganization({
-      name: data.organization.name,
-      address: data.organization.address
-    });
+    const organization = await createOrganization(
+      buildOrganizationPayload({
+        name: data.organization.name,
+        address: data.organization.address,
+        city: data.organization.city,
+        website: data.organization.website,
+        organizationNumber: data.organization.organizationNumber
+      })
+    );
 
     organizationId = readId(organization);
     createdOrganization = true;

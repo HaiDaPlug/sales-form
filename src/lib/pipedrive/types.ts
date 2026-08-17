@@ -89,6 +89,8 @@ export type SearchHit = {
   email?: string;
   phone?: string;
   address?: string;
+  /** Organisationsnummer or personnummer, when the account maps that field. */
+  organizationNumber?: string;
   organizationId?: CrmRecordId;
   organizationName?: string;
 };
