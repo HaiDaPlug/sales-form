@@ -5,7 +5,12 @@ import {
   initialMediacleaning,
   initialMeeting
 } from "@/components/sales-wizard/initialState";
-import { meetingStepSchema } from "@/lib/crm/schemas";
+import {
+  contractStepSchema,
+  dealStepSchema,
+  mediacleaningStepSchema,
+  meetingStepSchema
+} from "@/lib/crm/schemas";
 
 /**
  * The state the wizard actually starts from, checked against the schemas that
@@ -51,13 +56,19 @@ describe("wizard initial state (S01)", () => {
   });
 
   /**
-   * The remaining steps require seller input before they can pass, so these
-   * only assert the shape stays parseable — a missing key or wrong type in the
-   * initial state would surface as something other than a required-field error.
+   * The other steps all require seller input, so an untouched form is expected
+   * to fail. What matters is that it fails on *missing values* — every reported
+   * issue names a field. A wrong type or unknown key in the initial state would
+   * surface here as an issue with an empty path or a type error instead.
    */
-  it("starts the other steps from a shape their schemas recognize", () => {
-    expect(initialDeal.organization.customerType).toBe("company");
-    expect(initialMediacleaning.documentTypes).toEqual([]);
-    expect(initialContract.includeMediacleaningDocuments).toBe(false);
+  it.each([
+    ["deal", dealStepSchema, initialDeal],
+    ["mediacleaning", mediacleaningStepSchema, initialMediacleaning],
+    ["contract", contractStepSchema, initialContract]
+  ])("starts %s from a shape its schema recognizes", (_label, schema, initial) => {
+    const result = schema.safeParse(initial);
+
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error.issues.every((issue) => issue.path.length > 0)).toBe(true);
   });
 });

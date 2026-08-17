@@ -117,6 +117,49 @@ describe("meetingStepSchema (S01, S04)", () => {
     expect(result.success).toBe(false);
   });
 
+  /**
+   * Organization details entered without a name would otherwise validate and
+   * then be dropped: `resolveMeetingParties` only creates an organization for a
+   * non-blank name, so the seller's input would vanish silently.
+   */
+  it.each([
+    ["an address", { address: "Storgatan 1" }],
+    ["an organisationsnummer", { organizationNumber: "556677-8899" }],
+    ["a website", { website: "https://andersson.se" }],
+    ["a personnummer for a private individual", { customerType: "individual", organizationNumber: "19850101-1234" }]
+  ])("rejects %s entered without an organization name", (_label, fields) => {
+    const result = meetingStepSchema.safeParse(
+      meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, ...fields } })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "organization.name"
+    );
+  });
+
+  it("accepts organization details once a name is given", () => {
+    const result = meetingStepSchema.safeParse(
+      meeting({
+        organization: { ...BLANK_WIZARD_ORGANIZATION, name: "Andersson AB", organizationNumber: "556677-8899" }
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.organization?.organizationNumber).toBe("556677-8899");
+  });
+
+  it("accepts a selected organization without requiring the form to carry its name", () => {
+    // An organization picked from lookup already exists in Pipedrive with a
+    // name, so the form does not have to repeat it.
+    const result = meetingStepSchema.safeParse(
+      meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, id: 7 } })
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.organization?.id).toBe(7);
+  });
+
   it("accepts a personnummer in the organization identity field", () => {
     const result = meetingStepSchema.safeParse(
       meeting({

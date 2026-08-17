@@ -107,30 +107,57 @@ const meetingOrganizationSchema = organizationSchema.partial().extend({
 });
 
 /**
- * Drops an organization the seller never filled in.
+ * Drops an organization the seller never filled in, and requires a name for one
+ * they did.
+ *
+ * Three outcomes rather than two:
+ *  - nothing entered           → `undefined`, so a meeting can be booked from
+ *                                contact details alone (S01)
+ *  - entered, with a name      → kept
+ *  - entered, but no name      → rejected
+ *
+ * The last case is the one worth spelling out. Without it, an address or
+ * organisationsnummer typed without a name would validate, then be silently
+ * discarded: `resolveMeetingParties` only creates an organization when the name
+ * is non-blank, and the meeting route's
+ * `parsed.organization?.name ?? parsed.person.name` would resolve to `""`
+ * rather than the contact's name, because `??` does not fall back on an empty
+ * string. Failing here keeps the seller's input from disappearing.
+ *
+ * A selected organization is exempt: it already exists in Pipedrive with a
+ * name, whether or not the form carries a copy of it.
  *
  * Applied after parsing rather than through `z.preprocess`, which widens its
  * input to `unknown` and would erase the shape the wizard's organization fields
  * are edited through (`z.input<typeof meetingStepSchema>` feeds
  * `MeetingStepData`).
- *
- * Returning `undefined` — rather than an object of empty strings — is what
- * keeps `parsed.organization?.name ?? parsed.person.name` in the meeting route
- * from logging a blank customer name, and mirrors `resolveMeetingParties`,
- * which already treats a blank name as "no organization".
  */
-const optionalOrganization = meetingOrganizationSchema.optional().transform((organization) => {
-  if (!organization) return undefined;
+const optionalOrganization = meetingOrganizationSchema
+  .optional()
+  .transform((organization, ctx) => {
+    if (!organization) return undefined;
 
-  // `customerType` is excluded deliberately: it is a UI mode with a default
-  // ("company"), not something the seller entered, so it must not by itself
-  // make an otherwise empty organization look filled in.
-  const hasContent = Object.entries(organization).some(
-    ([key, field]) => key !== "customerType" && field !== undefined && String(field).trim() !== ""
-  );
+    // `customerType` is excluded deliberately: it is a UI mode with a default
+    // ("company"), not something the seller entered, so it must not by itself
+    // make an otherwise empty organization look filled in.
+    const hasContent = Object.entries(organization).some(
+      ([key, field]) => key !== "customerType" && field !== undefined && String(field).trim() !== ""
+    );
 
-  return hasContent ? organization : undefined;
-});
+    if (!hasContent) return undefined;
+
+    if (!organization.id && !organization.name?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["name"],
+        message: "Organisationsnamn krävs när organisationsuppgifter anges"
+      });
+
+      return z.NEVER;
+    }
+
+    return organization;
+  });
 
 export const meetingStepSchema = z.object({
   person: personSchema,
