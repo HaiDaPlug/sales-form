@@ -95,9 +95,81 @@ export const organizationSchema = z.object({
   organizationNumber: optionalIdentityNumber
 });
 
+/**
+ * `name` may be blank here, unlike on a deal. The wizard always sends an
+ * organization object with every field initialized to `""`, so `.partial()`
+ * alone is not enough — it makes the key optional but still runs
+ * `requiredText` on a name that is present and blank, failing a meeting booked
+ * from contact details alone (S01).
+ */
+const meetingOrganizationSchema = organizationSchema.partial().extend({
+  name: optionalText
+});
+
+/**
+ * Drops an organization the seller never filled in, and requires a name for one
+ * they did.
+ *
+ * Three outcomes rather than two:
+ *  - nothing entered           → `undefined`, so a meeting can be booked from
+ *                                contact details alone (S01)
+ *  - entered, with a name      → kept
+ *  - entered, but no name      → rejected
+ *
+ * The last case is the one worth spelling out. Without it, an address or
+ * organisationsnummer typed without a name would validate, then be silently
+ * discarded: `resolveMeetingParties` only creates an organization when the name
+ * is non-blank, and the meeting route's
+ * `parsed.organization?.name ?? parsed.person.name` would resolve to `""`
+ * rather than the contact's name, because `??` does not fall back on an empty
+ * string. Failing here keeps the seller's input from disappearing.
+ *
+ * A selected organization is exempt: it already exists in Pipedrive with a
+ * name, whether or not the form carries a copy of it. That is the one case
+ * where the output can lack a name, so a blank one is normalized away rather
+ * than passed on as `""` — otherwise
+ * `parsed.organization?.name ?? parsed.person.name` would resolve to an empty
+ * string, since `??` does not fall back on `""`. No consumer has to defend
+ * against a blank name that never reaches it.
+ *
+ * Applied after parsing rather than through `z.preprocess`, which widens its
+ * input to `unknown` and would erase the shape the wizard's organization fields
+ * are edited through (`z.input<typeof meetingStepSchema>` feeds
+ * `MeetingStepData`).
+ */
+const optionalOrganization = meetingOrganizationSchema
+  .optional()
+  .transform((organization, ctx) => {
+    if (!organization) return undefined;
+
+    // `customerType` is excluded deliberately: it is a UI mode with a default
+    // ("company"), not something the seller entered, so it must not by itself
+    // make an otherwise empty organization look filled in.
+    const hasContent = Object.entries(organization).some(
+      ([key, field]) => key !== "customerType" && field !== undefined && String(field).trim() !== ""
+    );
+
+    if (!hasContent) return undefined;
+
+    const name = organization.name?.trim();
+
+    if (!organization.id && !name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["name"],
+        message: "Organisationsnamn krävs när organisationsuppgifter anges"
+      });
+
+      return z.NEVER;
+    }
+
+    // A blank name only survives the check above on a selected organization.
+    return { ...organization, name: name || undefined };
+  });
+
 export const meetingStepSchema = z.object({
   person: personSchema,
-  organization: organizationSchema.partial().optional(),
+  organization: optionalOrganization,
   meetingType: requiredText("Mötestyp"),
   agenda: requiredText("Agenda"),
   technicianNotes: requiredText("Anteckningar till IT-tekniker"),

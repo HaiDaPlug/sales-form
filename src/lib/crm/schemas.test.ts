@@ -72,12 +72,98 @@ function contract(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The organization exactly as the wizard initializes it: present, but entirely
+ * blank. Tests that omit the key instead test a shape the UI never produces.
+ */
+const BLANK_WIZARD_ORGANIZATION = {
+  name: "",
+  customerType: "company",
+  website: "",
+  address: "",
+  city: "",
+  organizationNumber: ""
+};
+
 /** S01 — a meeting can be booked with contact details only. */
 describe("meetingStepSchema (S01, S04)", () => {
   it("accepts a meeting with no organization at all", () => {
     const result = meetingStepSchema.safeParse(meeting());
 
     expect(result.success).toBe(true);
+  });
+
+  it("accepts the blank organization the wizard always sends (S01)", () => {
+    const result = meetingStepSchema.safeParse(meeting({ organization: BLANK_WIZARD_ORGANIZATION }));
+
+    expect(result.success).toBe(true);
+  });
+
+  it("drops a blank organization rather than passing empty strings on (S01)", () => {
+    const result = meetingStepSchema.safeParse(meeting({ organization: BLANK_WIZARD_ORGANIZATION }));
+
+    // The service layer treats a blank name as "no organization"; the parsed
+    // value must say the same thing instead of relying on that second check.
+    expect(result.success && result.data.organization).toBeUndefined();
+  });
+
+  it("still validates an organization the seller partly filled in", () => {
+    // A typo'd entry must not be silently discarded as "blank" — only a wholly
+    // empty object counts as no organization.
+    const result = meetingStepSchema.safeParse(
+      meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, organizationNumber: "inte-ett-nummer" } })
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  /**
+   * Organization details entered without a name would otherwise validate and
+   * then be dropped: `resolveMeetingParties` only creates an organization for a
+   * non-blank name, so the seller's input would vanish silently.
+   */
+  it.each([
+    ["an address", { address: "Storgatan 1" }],
+    ["an organisationsnummer", { organizationNumber: "556677-8899" }],
+    ["a website", { website: "https://andersson.se" }],
+    ["a personnummer for a private individual", { customerType: "individual", organizationNumber: "19850101-1234" }]
+  ])("rejects %s entered without an organization name", (_label, fields) => {
+    const result = meetingStepSchema.safeParse(
+      meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, ...fields } })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "organization.name"
+    );
+  });
+
+  it("accepts organization details once a name is given", () => {
+    const result = meetingStepSchema.safeParse(
+      meeting({
+        organization: { ...BLANK_WIZARD_ORGANIZATION, name: "Andersson AB", organizationNumber: "556677-8899" }
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.organization?.organizationNumber).toBe("556677-8899");
+  });
+
+  it("accepts a selected organization without requiring the form to carry its name", () => {
+    // An organization picked from lookup already exists in Pipedrive with a
+    // name, so the form does not have to repeat it.
+    const result = meetingStepSchema.safeParse(
+      meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, id: 7 } })
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.organization?.id).toBe(7);
+
+    // The one case whose output may lack a name. It must be absent rather than
+    // blank, so the meeting route's `organization?.name ?? person.name` falls
+    // back to the contact instead of logging an empty customer name.
+    expect(result.success && result.data.organization?.name).toBeUndefined();
+    expect(result.success && (result.data.organization?.name ?? result.data.person.name)).toBe("Anna Andersson");
   });
 
   it("accepts a personnummer in the organization identity field", () => {
