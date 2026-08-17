@@ -57,9 +57,12 @@ describe("wizard initial state (S01)", () => {
 
   /**
    * The other steps all require seller input, so an untouched form is expected
-   * to fail. What matters is that it fails on *missing values* — every reported
-   * issue names a field. A wrong type or unknown key in the initial state would
-   * surface here as an issue with an empty path or a type error instead.
+   * to fail — on missing values, with every issue naming a field.
+   *
+   * The real shape guarantee comes from the `: DealStepData` annotations on the
+   * exported constants, which are checked at compile time. This only catches a
+   * schema that rejects the initial state outright, e.g. after a field is
+   * renamed on one side but not the other.
    */
   it.each([
     ["deal", dealStepSchema, initialDeal],

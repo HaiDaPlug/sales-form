@@ -125,7 +125,12 @@ const meetingOrganizationSchema = organizationSchema.partial().extend({
  * string. Failing here keeps the seller's input from disappearing.
  *
  * A selected organization is exempt: it already exists in Pipedrive with a
- * name, whether or not the form carries a copy of it.
+ * name, whether or not the form carries a copy of it. That is the one case
+ * where the output can lack a name, so a blank one is normalized away rather
+ * than passed on as `""` — otherwise
+ * `parsed.organization?.name ?? parsed.person.name` would resolve to an empty
+ * string, since `??` does not fall back on `""`. No consumer has to defend
+ * against a blank name that never reaches it.
  *
  * Applied after parsing rather than through `z.preprocess`, which widens its
  * input to `unknown` and would erase the shape the wizard's organization fields
@@ -146,7 +151,9 @@ const optionalOrganization = meetingOrganizationSchema
 
     if (!hasContent) return undefined;
 
-    if (!organization.id && !organization.name?.trim()) {
+    const name = organization.name?.trim();
+
+    if (!organization.id && !name) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["name"],
@@ -156,7 +163,8 @@ const optionalOrganization = meetingOrganizationSchema
       return z.NEVER;
     }
 
-    return organization;
+    // A blank name only survives the check above on a selected organization.
+    return { ...organization, name: name || undefined };
   });
 
 export const meetingStepSchema = z.object({

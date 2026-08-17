@@ -158,6 +158,12 @@ describe("meetingStepSchema (S01, S04)", () => {
 
     expect(result.success).toBe(true);
     expect(result.success && result.data.organization?.id).toBe(7);
+
+    // The one case whose output may lack a name. It must be absent rather than
+    // blank, so the meeting route's `organization?.name ?? person.name` falls
+    // back to the contact instead of logging an empty customer name.
+    expect(result.success && result.data.organization?.name).toBeUndefined();
+    expect(result.success && (result.data.organization?.name ?? result.data.person.name)).toBe("Anna Andersson");
   });
 
   it("accepts a personnummer in the organization identity field", () => {
