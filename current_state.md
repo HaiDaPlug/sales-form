@@ -128,7 +128,10 @@ than assume read-after-write.
    name/phone matches must be shown, never chosen; multiple matches force a
    seller decision; no strong match creates. Trading duplicate records for
    wrongly linked records would be a worse outcome, and S01 must keep working —
-   a weak match cannot become a blocker.
+   a weak match cannot become a blocker. This is the next task, and the search
+   index lag described above bears on it most directly: a record created earlier
+   in the same session may not be found, so a miss cannot be read as proof that
+   no such customer exists.
 2. **Calendar invitations and technician identity.** Section 2.7 and S08 require
    invitations to customer, seller and IT technician. No email/iCal code exists,
    and `technicianId`/`technicianName` are validated then never reach the
