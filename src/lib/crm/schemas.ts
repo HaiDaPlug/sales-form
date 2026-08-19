@@ -4,8 +4,11 @@ import { IDENTITY_NUMBER_MESSAGE, normalizeIdentityNumber } from "@/lib/crm/iden
 const requiredText = (label: string) => z.string().trim().min(1, `${label} krävs`);
 const optionalText = z.string().trim().optional();
 const recordId = z.union([z.string(), z.number()]);
+/** The `errorMap` keeps a missing value from falling back to Zod's English "Invalid input". */
 const requiredRecordId = (label: string) =>
-  z.union([z.string().trim().min(1, `${label} krävs`), z.number()]);
+  z.union([z.string().trim().min(1, `${label} krävs`), z.number()], {
+    errorMap: () => ({ message: `${label} krävs` })
+  });
 
 /**
  * ISO calendar date, e.g. 2026-08-03. Guards against free text reaching
@@ -170,9 +173,21 @@ const optionalOrganization = meetingOrganizationSchema
 export const meetingStepSchema = z.object({
   person: personSchema,
   organization: optionalOrganization,
-  meetingType: requiredText("Mötestyp"),
-  agenda: requiredText("Agenda"),
-  technicianNotes: requiredText("Anteckningar till IT-tekniker"),
+  /**
+   * Optional: it only names the activity, and `buildMeetingActivityPayload`
+   * falls back to a plain "Möte" subject rather than the "Möte: " a blank one
+   * would otherwise produce.
+   */
+  meetingType: optionalText,
+  /**
+   * Agenda, technician notes and location are optional: nothing downstream
+   * depends on them. The first two are only concatenated into the activity
+   * note, which `buildMeetingActivityPayload` already filters empties out of,
+   * and the location maps to an activity field Pipedrive accepts empty. A
+   * booking must not be blocked on detail the seller can add afterwards.
+   */
+  agenda: optionalText,
+  technicianNotes: optionalText,
   internalComment: optionalText,
   sellerId: recordId.optional(),
   technicianId: recordId.optional(),
@@ -180,7 +195,7 @@ export const meetingStepSchema = z.object({
   date: isoDate("Datum"),
   time: isoTime("Tid"),
   durationMinutes: z.coerce.number().min(15, "Minst 15 minuter"),
-  locationOrLink: requiredText("Plats eller möteslänk")
+  locationOrLink: optionalText
 });
 
 export const dealStepSchema = z.object({

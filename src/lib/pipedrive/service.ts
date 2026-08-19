@@ -378,7 +378,8 @@ export function buildMeetingActivityPayload(
     .join("\n\n");
 
   return {
-    subject: `Möte: ${data.meetingType}`,
+    // A blank meeting type would read "Möte: " on the activity.
+    subject: data.meetingType ? `Möte: ${data.meetingType}` : "Möte",
     type: "meeting",
     due_date: data.date,
     due_time: data.time,
@@ -389,8 +390,10 @@ export function buildMeetingActivityPayload(
     person_id: parties.personId,
     org_id: parties.organizationId,
     user_id: data.sellerId,
-    location: data.locationOrLink,
-    note
+    // Blank rather than absent would write an empty note and location onto the
+    // activity; agenda, technician notes and location are all optional now.
+    location: data.locationOrLink || undefined,
+    note: note || undefined
   };
 }
 

@@ -16,6 +16,7 @@ vi.mock("@/lib/pipedrive/client", () => ({
 const { pipedriveRequest, PipedriveApiError } = await import("@/lib/pipedrive/client");
 const {
   assertDealBelongsToOrganization,
+  buildMeetingActivityPayload,
   DealOwnershipError,
   ExistingRecordProtectionError,
   PartialResolutionError,
@@ -364,5 +365,52 @@ describe("partial resolution failures preserve created records", () => {
     // Pipedrive answered but without an id — still a failure, not a success.
     expect(error).toBeInstanceOf(PartialResolutionError);
     expect(error.parties.personId).toBeUndefined();
+  });
+});
+
+describe("buildMeetingActivityPayload", () => {
+  it("folds agenda, technician notes and internal comment into one note", () => {
+    const payload = buildMeetingActivityPayload(
+      meetingParties({ internalComment: "Ring först" }),
+      { personId: 11, createdPerson: true, createdOrganization: false }
+    );
+
+    expect(payload.note).toBe(
+      ["Genomgång", "IT-tekniker: Ta med demokonto", "Internt: Ring först"].join("\n\n")
+    );
+    expect(payload.location).toBe("Teams");
+  });
+
+  it("names the activity after the meeting type", () => {
+    const payload = buildMeetingActivityPayload(meetingParties(), {
+      personId: 11,
+      createdPerson: true,
+      createdOrganization: false
+    });
+
+    expect(payload.subject).toBe("Möte: IT-genomgång");
+  });
+
+  it("falls back to a plain subject when no meeting type was given", () => {
+    const payload = buildMeetingActivityPayload(meetingParties({ meetingType: "" }), {
+      personId: 11,
+      createdPerson: true,
+      createdOrganization: false
+    });
+
+    // "Möte: " with nothing after it is what a blank type used to produce.
+    expect(payload.subject).toBe("Möte");
+  });
+
+  it("omits the note and location rather than writing them blank", () => {
+    // All three are optional, so a meeting booked without them must not stamp
+    // empty values onto the Pipedrive activity.
+    const payload = buildMeetingActivityPayload(
+      meetingParties({ agenda: "", technicianNotes: "", locationOrLink: "" }),
+      { personId: 11, createdPerson: true, createdOrganization: false }
+    );
+
+    expect(payload.note).toBeUndefined();
+    expect(payload.location).toBeUndefined();
   });
 });
