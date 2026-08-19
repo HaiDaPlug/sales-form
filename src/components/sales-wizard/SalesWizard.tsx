@@ -448,6 +448,9 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
             <p className="hint">
               Varje steg kan återanvända kunddata, men bara steget Skapa affär får skapa en Pipedrive-affär.
             </p>
+            <p className="hint required-legend">
+              Fält märkta med <span className="required-mark">*</span> måste fyllas i innan steget kan köras.
+            </p>
           </div>
           <div className="status-pill">Utkastläge</div>
         </div>

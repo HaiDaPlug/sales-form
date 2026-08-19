@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { CheckLabel, FormSection, ReferenceSelect, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import { DateField } from "@/components/sales-wizard/DateField";
+import { TimeField } from "@/components/sales-wizard/TimeField";
 import { LookupBox, type ConflictChoice, type FieldConflict } from "@/components/sales-wizard/LookupBox";
 import { findPersonConflicts } from "@/components/sales-wizard/utils";
 import type { MeetingStepData } from "@/lib/crm/types";
@@ -87,7 +89,7 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
       />
 
       <FormSection title="Kontakt">
-        <TextField label="Namn" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
+        <TextField required label="Namn" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
         <TextField label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <TextField label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
         <TextField
@@ -150,9 +152,10 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
           value={data.technicianName}
           onChange={(technicianName) => onChange({ ...data, technicianName })}
         />
-        <TextField label="Datum" type="date" value={data.date} onChange={(date) => onChange({ ...data, date })} />
-        <TextField label="Tid" type="time" value={data.time} onChange={(time) => onChange({ ...data, time })} />
+        <DateField required label="Datum" value={data.date} onChange={(date) => onChange({ ...data, date })} />
+        <TimeField required label="Tid" value={data.time} onChange={(time) => onChange({ ...data, time })} />
         <TextField
+          required
           label="Längd minuter"
           type="number"
           value={String(data.durationMinutes)}

@@ -486,6 +486,18 @@ textarea:disabled {
   font-size: 12px;
 }
 
+/* Marks a field the step cannot be submitted without. Decorative — the control
+   carries `aria-required`, so screen readers are not read a stray asterisk. */
+.required-mark {
+  margin-left: 3px;
+  color: var(--danger);
+}
+
+/* The legend explaining the asterisk, sitting under the step description. */
+.required-legend {
+  margin-top: 4px;
+}
+
 .checks {
   display: flex;
   flex-wrap: wrap;
@@ -526,6 +538,286 @@ textarea:disabled {
   accent-color: var(--accent);
   box-shadow: none;
   cursor: pointer;
+}
+
+/* =============================================================================
+   Date & time pickers
+
+   Replaces the native `date`/`time` controls, which render in the browser's own
+   chrome — different per browser and OS, and never the product's. The trigger
+   copies the input metrics exactly so a picker sitting next to a text field in
+   the same row lines up to the pixel.
+   ========================================================================== */
+
+.picker {
+  position: relative;
+}
+
+.picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+
+.picker-trigger svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.picker-trigger.is-empty {
+  color: #9aa8ba;
+}
+
+.picker-trigger:hover,
+.picker-combo:hover {
+  border-color: var(--line-strong);
+}
+
+.picker-trigger:hover svg,
+.picker-addon:hover {
+  color: var(--accent);
+}
+
+/* The text input and its icon button read as one control, so the focus ring is
+   drawn on the wrapper rather than on either half. */
+.picker-combo {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+
+.picker-combo:focus-within,
+.picker-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.picker-input {
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.picker-input:focus {
+  outline: none;
+  border: none;
+  box-shadow: none;
+}
+
+.picker-addon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  min-height: 40px;
+  border: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: none;
+  color: var(--muted);
+  transition: color 0.14s var(--ease);
+}
+
+.picker-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  animation: picker-in 0.14s var(--ease);
+}
+
+@keyframes picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .picker-popover {
+    animation: none;
+  }
+}
+
+.calendar {
+  width: 268px;
+  padding: 12px;
+}
+
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.calendar-title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: var(--tracking-display);
+  text-transform: capitalize;
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink-body);
+  transition: background 0.14s var(--ease), color 0.14s var(--ease);
+}
+
+.calendar-nav:hover {
+  background: var(--panel-muted);
+  color: var(--accent);
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-weekdays {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.calendar-day {
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+/* Days borrowed from the neighbouring months stay pickable, just quiet. */
+.calendar-day[data-outside="true"] {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.calendar-day:hover {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.calendar-day[data-today="true"] {
+  border-color: var(--line-strong);
+  font-weight: 700;
+}
+
+.calendar-day[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  opacity: 1;
+}
+
+.calendar-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.calendar-action {
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.calendar-action:hover {
+  background: var(--accent-soft);
+}
+
+/* Menu-width rather than field-width: a list of five characters stretched
+   across a form column reads as a panel, not as a choice. */
+.time-list {
+  display: grid;
+  gap: 2px;
+  width: 132px;
+  max-height: 236px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.time-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.time-list::-webkit-scrollbar-thumb {
+  border: 2px solid var(--panel);
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+}
+
+.time-slot {
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.time-slot:hover {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.time-slot[aria-selected="true"] {
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
 }
 
 /* =============================================================================
