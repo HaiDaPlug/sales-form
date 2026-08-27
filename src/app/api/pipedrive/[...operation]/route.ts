@@ -19,6 +19,7 @@ import {
   getOrganizationFields,
   getPersonFields,
   getPipelines,
+  getSellers,
   getStages,
   getUsers,
   MIN_SEARCH_TERM_LENGTH,
@@ -73,6 +74,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     if (operation === "users") return jsonOk(await getUsers());
+    if (operation === "sellers") return jsonOk(await getSellers());
     if (operation === "pipelines") return jsonOk(await getPipelines());
     if (operation === "stages") return jsonOk(await getStages(searchParams.get("pipelineId") ?? undefined));
     if (operation === "custom-field-mappings") return jsonOk(getCustomFieldMappings());

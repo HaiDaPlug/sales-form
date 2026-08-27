@@ -5,6 +5,11 @@ import type { ReferenceOption } from "@/lib/pipedrive/types";
 
 export type ReferenceData = {
   users: ReferenceOption[];
+  /**
+   * The "Affärens säljare" options — kept separate from `users` because they are
+   * custom-field options, not accounts, and the two are not interchangeable.
+   */
+  sellers: ReferenceOption[];
   pipelines: ReferenceOption[];
   stages: ReferenceOption[];
   schedulerUrl?: string;
@@ -25,7 +30,12 @@ export type ReferenceData = {
  * carry `pipelineId` for exactly that reason.
  */
 export function useReferenceData(): ReferenceData {
-  const [data, setData] = useState<Omit<ReferenceData, "loading">>({ users: [], pipelines: [], stages: [] });
+  const [data, setData] = useState<Omit<ReferenceData, "loading">>({
+    users: [],
+    sellers: [],
+    pipelines: [],
+    stages: []
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -35,18 +45,20 @@ export function useReferenceData(): ReferenceData {
       const schedulerPromise = fetchSchedulerUrl().catch(() => undefined);
 
       try {
-        const [users, pipelines, stages] = await Promise.all([
+        const [users, sellers, pipelines, stages] = await Promise.all([
           fetchOptions("/api/pipedrive/users"),
+          fetchOptions("/api/pipedrive/sellers"),
           fetchOptions("/api/pipedrive/pipelines"),
           fetchOptions("/api/pipedrive/stages")
         ]);
 
         if (cancelled) return;
-        setData({ users, pipelines, stages, schedulerUrl: await schedulerPromise });
+        setData({ users, sellers, pipelines, stages, schedulerUrl: await schedulerPromise });
       } catch (error) {
         if (cancelled) return;
         setData({
           users: [],
+          sellers: [],
           pipelines: [],
           stages: [],
           schedulerUrl: await schedulerPromise,

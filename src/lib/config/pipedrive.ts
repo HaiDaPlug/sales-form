@@ -15,6 +15,12 @@ export type PipedriveCustomFieldMappings = {
   fakturaStart?: string;
   fakturagrupp?: string;
   viktigastForKunden?: string;
+  /**
+   * "Affärens säljare" — an enum of the four sellers, verified against
+   * `GET /dealFields` (2026-08-26). The sellers are options on this field, not
+   * Pipedrive user accounts, so the deal's `user_id` cannot represent them.
+   */
+  affarensSaljare?: string;
 };
 
 export type PipedriveCustomFieldName = keyof PipedriveCustomFieldMappings;
@@ -58,7 +64,8 @@ export type PipedriveRuntimeConfig = {
 export const REQUIRED_CUSTOM_FIELDS: PipedriveCustomFieldName[] = [
   "fakturaStart",
   "fakturagrupp",
-  "viktigastForKunden"
+  "viktigastForKunden",
+  "affarensSaljare"
 ];
 
 /** `FOO=` in a .env file means "not configured", not "configured as empty". */
@@ -80,7 +87,8 @@ export function getPipedriveConfig(): PipedriveRuntimeConfig {
     customFields: {
       fakturaStart: readKey(process.env.PIPEDRIVE_FIELD_FAKTURA_START),
       fakturagrupp: readKey(process.env.PIPEDRIVE_FIELD_FAKTURAGRUPP),
-      viktigastForKunden: readKey(process.env.PIPEDRIVE_FIELD_VIKTIGAST_FOR_KUNDEN)
+      viktigastForKunden: readKey(process.env.PIPEDRIVE_FIELD_VIKTIGAST_FOR_KUNDEN),
+      affarensSaljare: readKey(process.env.PIPEDRIVE_FIELD_AFFARENS_SALJARE)
     },
     organizationFields: {
       organizationNumber: readKey(process.env.PIPEDRIVE_FIELD_ORG_NUMBER),

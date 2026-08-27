@@ -190,6 +190,12 @@ export const meetingStepSchema = z.object({
   technicianNotes: optionalText,
   internalComment: optionalText,
   sellerId: recordId.optional(),
+  /**
+   * Carried alongside the id because an activity has nowhere to store it: the
+   * sellers are options on a custom *deal* field, and no equivalent activity
+   * field exists in the account, so the name is written into the note instead.
+   */
+  sellerName: optionalText,
   technicianId: recordId.optional(),
   technicianName: optionalText,
   date: isoDate("Datum"),

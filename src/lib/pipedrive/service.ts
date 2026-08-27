@@ -302,6 +302,38 @@ export async function getUsers(): Promise<ReferenceOption[]> {
     .sort((a, b) => a.name.localeCompare(b.name, "sv"));
 }
 
+/**
+ * The sellers assignable to a deal.
+ *
+ * These are the options of the "Affärens säljare" custom deal field, not
+ * Pipedrive user accounts — the four sellers have no login of their own, so
+ * `/users` does not and will never list them. Reading the options live means
+ * editing them in Pipedrive updates the dropdown without a redeploy.
+ *
+ * Returns an empty list when the field key is unconfigured or the field has
+ * since been deleted, which the UI degrades into a free-text input rather than
+ * an empty dropdown.
+ */
+export async function getSellers(): Promise<ReferenceOption[]> {
+  const fieldKey = getPipedriveConfig().customFields.affarensSaljare;
+  if (!fieldKey) return [];
+
+  const fields = await pipedriveRequest<AnyRecord[]>("/dealFields");
+  const field = (fields ?? []).find((candidate) => candidate.key === fieldKey);
+  const options = Array.isArray(field?.options) ? field.options : [];
+
+  return options.map((option) => {
+    const record = asRecord(option);
+
+    return {
+      // Pipedrive stores an enum's value as the numeric option id, so that —
+      // not the label — is what the deal payload has to carry.
+      id: asRecordId(record?.id),
+      name: asString(record?.label) ?? "Namnlös säljare"
+    };
+  });
+}
+
 export async function getPipelines(): Promise<ReferenceOption[]> {
   const pipelines = await pipedriveRequest<AnyRecord[]>("/pipelines");
 
@@ -439,6 +471,10 @@ export function buildMeetingActivityPayload(
 ): PipedriveActivityPayload {
   const pipedriveTime = stockholmMeetingTimeAsUtc(data.date, data.time);
   const note = [
+    // The seller leads the note because it is the only place an activity can
+    // show them: they are options on a custom deal field rather than Pipedrive
+    // users, so `user_id` cannot name them and no custom activity field exists.
+    data.sellerName ? `Säljare: ${data.sellerName}` : "",
     data.agenda,
     data.technicianNotes ? `IT-tekniker: ${data.technicianNotes}` : "",
     data.internalComment ? `Internt: ${data.internalComment}` : ""
@@ -458,7 +494,9 @@ export function buildMeetingActivityPayload(
     // new contact's meeting orphaned.
     person_id: parties.personId,
     org_id: parties.organizationId,
-    user_id: data.sellerId,
+    // No `user_id`: the seller is a custom-field option, not a user account, so
+    // sending its id here was rejected as an unknown user. The activity is owned
+    // by the token's own user and names the seller in its note instead.
     // Blank rather than absent would write an empty note and location onto the
     // activity; agenda, technician notes and location are all optional now.
     location: data.locationOrLink || undefined,
@@ -717,7 +755,9 @@ export async function buildDealPayload(
     title: data.deal.title,
     person_id: parties.personId,
     org_id: parties.organizationId,
-    user_id: data.sellerId,
+    // No `user_id`: the seller is an option on the "Affärens säljare" custom
+    // field below, not a Pipedrive user. Sending an option id here was rejected
+    // as an unknown user, and the four sellers have no account to own the deal.
     value: data.deal.value,
     currency: data.deal.currency ?? config.defaultCurrency,
     pipeline_id: pipelineId,
@@ -731,6 +771,7 @@ export async function buildDealPayload(
   assignCustomField(payload, customFields.viktigastForKunden, data.viktigastForKunden);
   assignCustomField(payload, customFields.fakturaStart, data.fakturaStart);
   assignCustomField(payload, customFields.fakturagrupp, data.fakturagrupp);
+  assignCustomField(payload, customFields.affarensSaljare, data.sellerId);
 
   return payload;
 }

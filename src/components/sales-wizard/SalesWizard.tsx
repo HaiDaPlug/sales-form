@@ -138,7 +138,10 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
     if (index === 3) {
       const sellerId = String(deal.sellerId ?? meeting.sellerId ?? "");
-      const sellerName = reference.users.find((user) => String(user.id) === sellerId)?.name;
+      // Resolved against the seller options, not `users`: the contract prints
+      // the seller's name, and the sellers are custom-field options.
+      const sellerName =
+        reference.sellers.find((option) => String(option.id) === sellerId)?.name ?? meeting.sellerName;
 
       setContract((current) => ({
         ...current,

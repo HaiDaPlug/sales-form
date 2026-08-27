@@ -128,10 +128,15 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
         <ReferenceSelect
           label="Säljare"
           value={data.sellerId}
-          options={reference.users}
+          options={reference.sellers}
           loading={reference.loading}
           error={reference.error}
-          onChange={(sellerId) => onChange({ ...data, sellerId })}
+          onChange={(sellerId) => {
+            // The name is what reaches Pipedrive — the activity note is the only
+            // place it can appear — so it has to be resolved and stored here.
+            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
+            onChange({ ...data, sellerId, sellerName: seller?.name ?? "" });
+          }}
         />
         <ReferenceSelect
           label="IT-tekniker"

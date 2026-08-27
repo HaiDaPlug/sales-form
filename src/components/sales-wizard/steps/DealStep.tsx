@@ -161,7 +161,7 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
           required
           label="Säljare"
           value={data.sellerId}
-          options={reference.users}
+          options={reference.sellers}
           loading={reference.loading}
           error={reference.error}
           onChange={(sellerId) => onChange({ ...data, sellerId })}

@@ -411,6 +411,33 @@ describe("buildMeetingActivityPayload", () => {
     expect(payload.location).toBe("Teams");
   });
 
+  /**
+   * The sellers are options on a custom deal field, not Pipedrive users, so an
+   * activity has no field that can hold one. Sending the option id as `user_id`
+   * made Pipedrive reject the booking as an unknown user.
+   */
+  it("names the seller in the note rather than owning the activity with them", () => {
+    const payload = buildMeetingActivityPayload(
+      meetingParties({ sellerId: 74, sellerName: "Adam Westin" }),
+      { personId: 11, createdPerson: true, createdOrganization: false }
+    );
+
+    expect(payload.user_id).toBeUndefined();
+    expect(payload.note).toBe(
+      ["Säljare: Adam Westin", "Genomgång", "IT-tekniker: Ta med demokonto"].join("\n\n")
+    );
+  });
+
+  it("leaves the note free of a seller line when none was chosen", () => {
+    const payload = buildMeetingActivityPayload(meetingParties(), {
+      personId: 11,
+      createdPerson: true,
+      createdOrganization: false
+    });
+
+    expect(payload.note).not.toContain("Säljare:");
+  });
+
   it("names the activity after the meeting type", () => {
     const payload = buildMeetingActivityPayload(meetingParties(), {
       personId: 11,

@@ -59,12 +59,12 @@ export function ContractStep({
         <ReferenceSelect
           label="Säljare"
           value={data.sellerId}
-          options={reference.users}
+          options={reference.sellers}
           loading={reference.loading}
           error={reference.error}
           onChange={(sellerId) => {
             // The contract prints the seller's name, so keep it in sync.
-            const seller = reference.users.find((user) => String(user.id) === sellerId);
+            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
             onChange({ ...data, sellerId, sellerName: seller?.name ?? data.sellerName });
           }}
         />
