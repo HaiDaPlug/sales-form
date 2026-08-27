@@ -3,6 +3,7 @@ import type { CrmRecordId } from "@/lib/crm/types";
 import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
 import { PipedriveApiError, pipedriveRequest } from "@/lib/pipedrive/client";
 import type {
+  MeetingOverlap,
   PipedriveActivityPayload,
   PipedriveDealPayload,
   PipedriveFilePayload,
@@ -463,6 +464,136 @@ function utcDateTimeParts(instant: number): { date: string; time: string } {
   const minute = String(value.getUTCMinutes()).padStart(2, "0");
 
   return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
+}
+
+/** `01:30` → 90. Pipedrive returns an activity's duration as `HH:MM`. */
+function durationToMinutes(value: unknown): number {
+  const text = asString(value);
+  if (!text) return 0;
+
+  const [hours, minutes] = text.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+
+  return hours * 60 + minutes;
+}
+
+/**
+ * Minutes from the epoch for a stored `due_date`/`due_time` pair.
+ *
+ * Activities are stored in UTC — the same convention
+ * `buildMeetingActivityPayload` writes them in — so stored times are already on
+ * a common timeline and are compared directly.
+ */
+function storedTimeMinutes(date: string, time: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+
+  return Date.UTC(year, month - 1, day, hour, minute) / 60000;
+}
+
+/** A stored UTC `due_date`/`due_time` back to the Swedish wall time sellers read. */
+function storedTimeAsStockholm(date: string, time: string): { date: string; time: string } {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const parts = stockholmDateTimeParts(Date.UTC(year, month - 1, day, hour, minute));
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+
+  return {
+    date: `${pad(parts.year, 4)}-${pad(parts.month)}-${pad(parts.day)}`,
+    time: `${pad(parts.hour)}:${pad(parts.minute)}`
+  };
+}
+
+/**
+ * Existing activities whose time overlaps the proposed booking.
+ *
+ * The booking is converted to UTC first, exactly as
+ * `buildMeetingActivityPayload` does before creating an activity, so both sides
+ * of the comparison are in the form Pipedrive stores. Comparing the seller's
+ * raw wall-clock time against stored times would be wrong by the Stockholm
+ * offset and would miss every real clash.
+ *
+ * Two constraints of the activities endpoint are load-bearing here:
+ *  - `end_date` is exclusive, so a same-day range returns nothing. The query
+ *    spans the day after the meeting.
+ *  - It defaults to the token user's own activities, so `user_id=0` is required
+ *    to see bookings made by colleagues — the duplicates worth catching.
+ *
+ * Undated to-dos (no `due_time`) have no span and are skipped; treating them as
+ * midnight would warn on every booking that shares their date.
+ */
+export async function findMeetingOverlaps(data: {
+  date: string;
+  time: string;
+  durationMinutes: number;
+  personId?: CrmRecordId;
+  organizationId?: CrmRecordId;
+}): Promise<MeetingOverlap[]> {
+  const start = stockholmMeetingTimeAsUtc(data.date, data.time);
+  const startsAt = storedTimeMinutes(start.date, start.time);
+  const endsAt = startsAt + data.durationMinutes;
+
+  // A day either side covers a booking whose UTC date differs from its Swedish
+  // one and absorbs the exclusive `end_date`; the filter below does the real work.
+  const activities = await pipedriveRequest<AnyRecord[]>("/activities", {
+    query: {
+      user_id: 0,
+      start_date: shiftDate(start.date, -1),
+      end_date: shiftDate(start.date, 2),
+      limit: 100
+    }
+  });
+
+  return (activities ?? [])
+    .flatMap((activity) => {
+      const dueDate = asString(activity.due_date);
+      const dueTime = asString(activity.due_time);
+
+      // Undated to-dos and cancelled activities cannot clash with anything.
+      if (!dueDate || !dueTime || activity.active_flag === false) return [];
+
+      const otherStart = storedTimeMinutes(dueDate, dueTime);
+      // A zero-length activity still occupies its start minute, so treat it as
+      // one minute rather than letting it silently never overlap.
+      const otherEnd = otherStart + (durationToMinutes(activity.duration) || 1);
+
+      // Touching edges are not a clash: a meeting ending at 10:00 and the next
+      // starting at 10:00 is a back-to-back booking, which sellers do on purpose.
+      if (otherStart >= endsAt || otherEnd <= startsAt) return [];
+
+      // Reported in Swedish time so the warning matches the seller's calendar.
+      const localStart = storedTimeAsStockholm(dueDate, dueTime);
+      const storedEnd = utcDateTimeParts(otherEnd * 60000);
+      const localEnd = storedTimeAsStockholm(storedEnd.date, storedEnd.time);
+      const person = asRecord(activity.person_id);
+      const organization = asRecord(activity.org_id);
+      const personId = person ? asRecordId(person.id) : asRecordId(activity.person_id);
+      const organizationId = organization ? asRecordId(organization.id) : asRecordId(activity.org_id);
+
+      return [
+        {
+          id: asRecordId(activity.id),
+          subject: asString(activity.subject) ?? "Namnlös aktivitet",
+          date: localStart.date,
+          time: localStart.time,
+          endTime: localEnd.time,
+          personName: person ? asString(person.name) : undefined,
+          organizationName: organization ? asString(organization.name) : undefined,
+          sameContact:
+            (data.personId !== undefined && String(personId) === String(data.personId)) ||
+            (data.organizationId !== undefined && String(organizationId) === String(data.organizationId))
+        }
+      ];
+    })
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+}
+
+/** `YYYY-MM-DD` shifted by whole days, for building the query window. */
+function shiftDate(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+
+  return utcDateTimeParts(shifted.getTime()).date;
 }
 
 export function buildMeetingActivityPayload(

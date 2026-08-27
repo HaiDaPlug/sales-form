@@ -965,6 +965,130 @@ textarea:disabled {
 }
 
 /* =============================================================================
+   Modal — the booking-overlap confirmation
+   ========================================================================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(14, 28, 48, 0.45);
+  animation: modal-fade 0.14s var(--ease);
+}
+
+.modal {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  animation: modal-rise 0.16s var(--ease);
+}
+
+.modal-title {
+  margin: 0 0 8px;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: var(--tracking-display);
+  color: var(--ink);
+}
+
+.modal-description {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--ink-body);
+}
+
+.overlap-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.overlap-item {
+  display: grid;
+  gap: 3px;
+  padding: 11px 13px;
+  border: 1px solid var(--warning-line);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+}
+
+.overlap-when {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--warning);
+}
+
+.overlap-subject {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.overlap-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.overlap-tag {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--warning);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* The safe choice leads and takes the width it needs; "boka ändå" stays
+   deliberately plain so it is never the reflexive click. */
+.modal-actions .btn {
+  flex: 1 1 auto;
+}
+
+@keyframes modal-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .modal {
+    animation: none;
+  }
+}
+
+/* =============================================================================
    Lookup
    ========================================================================== */
 
@@ -1503,6 +1627,84 @@ textarea:disabled {
 
   .steps {
     gap: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .panel {
+    padding: 18px 16px;
+  }
+
+  .panel.history-table-wrap {
+    padding: 0;
+  }
+
+  .side-panel {
+    padding: 18px 16px;
+  }
+
+  .lookup {
+    padding: 14px;
+  }
+
+  .lookup-row {
+    grid-template-columns: 1fr;
+  }
+
+  .lookup-row .btn,
+  .button-group .btn {
+    width: 100%;
+  }
+
+  .button-group {
+    flex-direction: column;
+  }
+
+  .btn {
+    white-space: normal;
+  }
+
+  .login-shell {
+    padding:
+      max(18px, env(safe-area-inset-top))
+      max(16px, env(safe-area-inset-right))
+      max(18px, env(safe-area-inset-bottom))
+      max(16px, env(safe-area-inset-left));
+  }
+
+  .login-panel {
+    gap: 20px;
+  }
+
+  .login-card {
+    padding: 24px 20px;
+  }
+
+  .modal-backdrop {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .modal {
+    max-height: calc(100dvh - 24px);
+    padding: 20px 16px;
+  }
+
+  .modal-actions {
+    flex-direction: column;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
+  }
+}
+
+@media (max-height: 600px) {
+  .login-shell {
+    place-items: start center;
   }
 }
 

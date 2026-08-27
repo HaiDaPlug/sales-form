@@ -80,6 +80,28 @@ export type ReferenceOption = {
   pipelineId?: CrmRecordId;
 };
 
+/**
+ * An existing activity whose time span overlaps a booking being made.
+ *
+ * Times are the Swedish wall-clock values the seller recognizes, converted back
+ * from the UTC that Pipedrive stores — showing the raw stored time would report
+ * a clash an hour or two away from where the seller sees it in the calendar.
+ */
+export type MeetingOverlap = {
+  id: CrmRecordId;
+  subject: string;
+  /** `YYYY-MM-DD`, Swedish local date. */
+  date: string;
+  /** `HH:MM`, Swedish local start time. */
+  time: string;
+  /** `HH:MM`, Swedish local end time. */
+  endTime: string;
+  personName?: string;
+  organizationName?: string;
+  /** Set when the clash involves the same contact or organization as the booking. */
+  sameContact?: boolean;
+};
+
 /** Flat, UI-ready search hit. One shape for all three record types. */
 export type SearchHit = {
   id: CrmRecordId;
