@@ -1,5 +1,134 @@
 # Current State
 
+## 2026-08-27 — Seller field bound to Pipedrive, booking-overlap warning added; 233 tests pass
+
+Two features, both driven by what the live Pipedrive account actually contains
+rather than by what the field names suggested.
+
+### Säljare is a custom deal field, not a Pipedrive user
+
+The dropdown offered the account's *users* — two "Digital Kontakt" service
+accounts, a deactivated Johan Stenvall, and Roble — while the four names the
+business uses (Filippa, Robin, Adam Westin, Tobias Ek) are **options 72–75 on
+the custom deal field "Affärens säljare"** (`e750cc48…`). They have no Pipedrive
+login, so `/users` cannot list them and never will.
+
+The selection was also sent as `user_id`. An option id is not a user id, which
+is why the salesperson never appeared in Pipedrive.
+
+- `getSellers()` reads the options live from `GET /dealFields`, so editing them
+  in Pipedrive changes the form without a redeploy. Served at
+  `/api/pipedrive/sellers`; the deal, meeting and contract steps all use it.
+- The deal writes the option id to the custom field and no longer sets
+  `user_id`. Verified live: a deal created with option 74 reads back as `74`.
+- `PIPEDRIVE_FIELD_AFFARENS_SALJARE` joins the required custom-field keys, so an
+  unmapped key fails loudly instead of dropping the seller silently.
+
+Meetings have nowhere structured to put this: the account has **zero custom
+activity fields**, and an activity's only owner slot is `user_id`. The seller's
+name is written as the first line of the activity note instead, following the
+pattern already used for external IT technicians.
+
+### Overlapping bookings now warn before anything is created
+
+Submitting the meeting step checks Pipedrive for activities overlapping the
+proposed time. On a hit, a blocking dialog lists the clashes and offers "avbryt
+och ändra tid" or "boka ändå"; nothing is created until the seller chooses. The
+account already contained an identical duplicate pair (`4505`/`4506`) made by
+re-submission, which is the case this exists to catch. The choice is not
+remembered — editing the time re-runs the check.
+
+Two endpoint behaviours were verified against the live API because either one
+would have made the feature silently useless:
+
+- **`end_date` is exclusive.** `start_date=end_date=2026-08-19` returns zero
+  activities on a day holding two; `19→20` returns both.
+- **It defaults to the token user's own activities** — 3 of the account's
+  hundreds. `user_id=0` is required, or a colleague's double-booking is
+  invisible.
+
+Touching edges do not warn, so back-to-back bookings are unaffected; undated
+to-dos are skipped, since treating a missing time as midnight would warn on
+every booking sharing that date. A failed check never blocks the booking.
+
+### Correction recorded
+
+Mid-implementation the timezone conversion from `0277e10` was wrongly judged to
+be a bug, on the evidence that Pipedrive's API echoes `due_time` back exactly as
+sent. That evidence was insufficient: the API round-trip says nothing about what
+Pipedrive **Calendar** renders, which is where the original 16:10 → 19:10 shift
+was observed. The overlap check was reverted to compare in UTC via the existing
+`stockholmMeetingTimeAsUtc`, matching the payload's convention.
+`buildMeetingActivityPayload` was never modified.
+
+### Verification
+
+- `npm test` — **233/233 pass** across fourteen files.
+- `npm run typecheck`, `npm run lint`, `npm run build` — all pass.
+- `git diff --check` — passes.
+- Overlap logic checked against live Pipedrive data: **8/8 scenarios**,
+  including catching `4505`/`4506` and correctly not firing on back-to-back
+  slots or on days holding only undated to-dos.
+
+### Open items
+
+- **Deal `806`** ("ZZ TEST seller field - safe to delete") was created to prove
+  the custom field accepts an option id, and still exists. The API token lacks
+  delete permission for deals (403 on both v1 and v2), so it needs removing by
+  hand. Activity deletion does work — the timezone probe activity was cleaned up
+  through the API.
+- A meeting's seller lives in the activity note. Making it structured requires
+  an admin to add a "Säljare" enum field on Activities with the same four
+  options; writing to it would then be a two-line change.
+- The timezone direction is confirmed only by the original Calendar observation.
+  A booking made through the form and checked in Pipedrive Calendar would settle
+  it definitively.
+
+## 2026-08-27 — Full mobile compatibility pass completed
+
+The sales portal now has a responsive, touch-friendly presentation across the
+workflow, login and history routes. The work stayed presentation-only: CRM
+payloads, validation, authentication and document generation were not changed.
+Most of the implementation lives in `src/app/globals.css`; the history page
+adds `data-label` attributes so its semantic table can render as labeled cards
+on phones.
+
+### What changed
+
+- The sidebar becomes a two-row sticky header before its contents can crowd or
+  overflow. All four workflow steps remain visible as full labels on tablets
+  and numbered 44px touch targets on phones.
+- Phone layouts respect display safe areas, use dynamic viewport heights and
+  keep controls at least 44px tall. Form controls render at 16px on small
+  screens so iOS does not zoom the page when a field receives focus.
+- Forms, actions, lookup results, selected CRM records, warnings and long
+  conflict-choice buttons now shrink and wrap without widening the viewport.
+- Date and time popovers fit their form column instead of using a fixed width
+  that can escape a narrow panel. Calendar navigation and days have larger
+  mobile targets.
+- The history filters become a single swipeable row and each history entry
+  becomes a labeled card below 680px; the desktop table and its semantics are
+  preserved.
+- The login card remains usable on narrow and short viewports, including
+  devices with safe-area insets.
+- The booking-overlap dialog, added concurrently during this pass, received
+  dynamic-height, safe-area and stacked-action handling for phones.
+
+### Verification
+
+- Live responsive checks covered 320px, 375px, 768px and 1440px viewports.
+- All four wizard steps were inspected at 320px with no horizontal overflow.
+- The login screen and date picker were exercised at 320px; the history-card
+  layout was checked with deliberately long sample content.
+- `npm run typecheck`, `npm run lint` and `npm run build` pass. The production
+  build generates all eleven routes.
+- The responsive change set passed the then-current suite at **218/218 tests**.
+  A meeting-overlap feature added concurrently later expanded the suite. The two
+  overlap failures recorded here mid-flight (ordering and winter time) were
+  caused by that feature's timezone handling, not by the mobile work, and are
+  resolved — the combined tree now passes **233/233**.
+- `git diff --check` passes. No dependency manifest or lockfile changed.
+
 ## 2026-08-27 — Pipedrive meeting times corrected for Stockholm timezone; 210 tests pass
 
 A live comparison of form-created activities `4505` and `4506` isolated the
@@ -37,6 +166,126 @@ was created because that would add another real Pipedrive activity.
 The IT-technician selection remains separate from this timezone fix. It is not
 currently assigned to the Pipedrive activity and needs its own product decision
 about activity ownership or participation.
+
+## 2026-08-19 — Required fields marked, meeting detail unblocked, native date and time pickers replaced; 207 tests pass
+
+Four commits on `feat/organization-identity`, all pushed. The starting point
+was a screenshot of the meeting step's error box: a seller had submitted an
+empty step and got back a list reading `agenda: Agenda krävs`. Two separate
+faults sat behind that one screenshot — the errors were presented as jargon,
+and three of the fields they named should never have blocked the step at all.
+The fourth commit (cbc2308) is documentation only: it records the open
+questions about meeting ownership and customer invitations in
+`docs/INTENTIONS.md`.
+
+### Verified baseline
+
+- `npm test` — **207/207 pass** across twelve files (was 181 across ten).
+- `npm run typecheck`, `npm run lint`, `npm run build` — all pass. Re-run
+  2026-08-21 against the same commits: all four still pass.
+- Branch `feat/organization-identity` is level with its remote; CI runs the
+  same four checks on every pull request.
+- **These four commits sit on PR #3, which is still open and no longer
+  matches its title.** It was raised on 08-17 as "Store organization identity
+  in Pipedrive and search by it" — one commit. It now carries seven commits,
+  29 files and +2144 lines, most of it validation and UI work unrelated to
+  organization identity. A reviewer opening it expects the identity change
+  and finds a form overhaul. Either split the 08-19 commits onto their own
+  branch off `main`, or retitle #3 to describe what it actually contains
+  before asking anyone to review it.
+
+### 1. Validation errors are read, not decoded (71712b3)
+
+`formatZodErrors` prefixed every line with the failing field's path, so the
+seller read `agenda: Agenda krävs` — the field named twice, once in the
+schema's own Swedish and once as a JSON key. Every schema message already
+names its field, so the prefix carried nothing. It is gone, and identical
+messages are now deduplicated: two fields failing the same way produced two
+identical lines, which also collided as React keys.
+
+### 2. A booking is no longer blocked on detail that can follow (5ba927f)
+
+Mötestyp, agenda, technician notes and location were all `requiredText`, yet
+nothing downstream depends on any of them. The first three are concatenated
+into the activity note, which `buildMeetingActivityPayload` already filters
+empties out of; the location maps to an activity field Pipedrive accepts
+empty. The step rejected bookings the service layer would have handled.
+
+All four are now `optionalText`. The payload builder was tightened to match:
+a blank note and location are omitted rather than written as empty strings,
+and a missing meeting type falls back to a plain `Möte` subject instead of
+the `Möte: ` it used to stamp on the activity.
+
+One English message was hiding in the same area. `requiredRecordId` is a
+`z.union`, and a *missing* value — as opposed to a blank one — fell through
+to Zod's own `Invalid input`. With the field path dropped in (1), that line
+would have been unattributable. An `errorMap` keeps it on the Swedish
+message naming the field.
+
+### 3. Required fields are visible before submitting (795faeb)
+
+Nothing distinguished a blocking field from an optional one until the seller
+submitted and read the error list. Every field whose schema rejects a blank
+value now carries an asterisk via `FieldLabel`, explained by a legend under
+the step description — across all four steps and the supplier editor, whose
+`Uppsägningsadress (krävs)` label lost its hand-written suffix to the mark. Required-ness still lives in the schemas; the mark only
+mirrors it. Fields that always hold a usable value — a number defaulting to
+0, a select with a default — stay unmarked, because an asterisk that never
+blocks anything teaches the seller to ignore the ones that do. The asterisk
+is `aria-hidden`; `aria-required` on the control carries the meaning without
+being read out as punctuation.
+
+### 4. The date and time controls are the product's, not the browser's
+
+`<input type="date">` and `<input type="time">` render in each browser's own
+chrome — a different shape, font and date order per browser and OS locale.
+Both are now project components in the same commit as (3).
+
+- `calendar.ts` holds the logic: Monday-first month grids, Swedish month and
+  weekday names, `ons 19 aug 2026` display, and a lenient time parser. It is
+  string-based and local-time throughout. `Date.toISOString()` is deliberately
+  never used — in Swedish summer time it turns midnight on the 19th into the
+  18th, which would silently move a booking a day.
+- `DateField.tsx` renders a trigger built to the text inputs' exact metrics,
+  so a picker beside a text field in the same row lines up to the pixel. The
+  popover keeps six rows in every month so the form below does not jump. Arrow
+  keys move by day, PageUp/PageDown by month (clamped to the shorter month's
+  last day), Enter picks, Escape closes and returns focus to the trigger.
+- `TimeField.tsx` keeps typing as the fast path: `9`, `930`, `9.30` and `9:5`
+  all normalise to `HH:MM` on blur, never mid-keystroke. The clock button
+  opens a quarter-hour list scrolled to the chosen time, or to now.
+- `usePopover.ts` closes either popover on an outside click or Escape and
+  returns focus to the control that opened it.
+
+Stored values are unchanged — `YYYY-MM-DD` and `HH:MM` — so the schemas and
+Pipedrive payloads were untouched by this. 19 new tests cover the grid edges,
+month wrapping, impossible dates like `2026-02-30`, the time parser, and the
+closed state each field server-renders.
+
+Verification was static: the compiled CSS was served against the exact markup
+the components emit and screenshotted. The live wizard sits behind the login,
+so the popovers have not been clicked through in the running app.
+
+### Open items
+
+Those listed under 08-17 stand. Added by this work:
+
+1. **A date can no longer be typed.** The date trigger is a button; only the
+   time field accepts typed entry. If sellers enter dates from a list at
+   speed, the trigger needs the same typed path the time field has.
+2. **The pickers are unverified in the running app.** Their keyboard and
+   focus behaviour is interaction code that no test exercises, since the
+   project tests in `node` without a DOM.
+3. **Marked and enforced can drift.** `FieldLabel`'s `required` prop is set
+   by hand at each call site against what the schema does. Nothing fails when
+   the two disagree.
+4. **One required field cannot be marked.** The meeting step's organization
+   name is required only once another organization field is filled in, so a
+   permanent asterisk would be a lie and no asterisk leaves the rule
+   invisible. It still surfaces only as an error on submit — the same
+   complaint that started this work, in the one place the asterisk cannot
+   answer.
+5. **PR #3 needs splitting or retitling** before review, as above.
 
 ## 2026-08-17 — S01 closed, CI added, organization identity persisted; 181 tests pass
 

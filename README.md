@@ -97,11 +97,11 @@ values are form data, not environment variables.
 
 Environment variables under `PIPEDRIVE_FIELD_*` contain only account-specific
 Pipedrive API field keys. The current account exposes writable fields for
-Faktura Start, Fakturagrupp and Viktigast för kunden, so those three values are
-written to the deal. The other commercial values remain available to the
-contract workflow and generated contract, but are not invented as Pipedrive
-custom fields. If the account later adds those fields, mappings can be added
-without moving seller-entered values into environment configuration.
+Faktura Start, Fakturagrupp, Viktigast för kunden and Affärens säljare, so those
+four values are written to the deal. The other commercial values remain
+available to the contract workflow and generated contract, but are not invented
+as Pipedrive custom fields. If the account later adds those fields, mappings can
+be added without moving seller-entered values into environment configuration.
 
 Organizations have two custom fields of their own: `Org. Nummer`, which holds
 organisationsnummer or personnummer, and `Webbplats`. Both are written whenever
@@ -118,6 +118,32 @@ Pipedrive account. Stages are filtered by the selected pipeline, and changing
 pipeline clears the stage so the two cannot disagree. If a list cannot be loaded
 the field falls back to a plain text input, so a known ID can still be entered.
 
+Sellers are the exception to "loaded from the account's users": they have no
+Pipedrive login, and exist as options on the custom deal field `Affärens
+säljare`. The dropdown reads those options live from `GET /dealFields`, so
+editing them in Pipedrive changes the form without a redeploy. Because an option
+id is not a user id, it is written to that custom field and never to `user_id` —
+sending it as an owner made Pipedrive reject the record as an unknown user.
+Activities have no equivalent custom field in this account, so a booked meeting
+is owned by the API token's user and names its seller on the first line of the
+activity note instead.
+
+## Duplicate and double-booking protection
+
+Submitting the meeting step checks Pipedrive for activities whose time overlaps
+the booking, and stops on a hit: a dialog lists what it clashes with and offers
+"avbryt och ändra tid" or "boka ändå". Nothing is created until the seller
+chooses, because an overlap is usually a re-submitted booking — the account
+already contains identical activity pairs made that way. The choice is not
+remembered; editing the time re-runs the check.
+
+The check spans every user's activities, not just the API token's own, and it
+compares in UTC — the form activities are stored in — converting the seller's
+Swedish time first. Touching edges are allowed, so back-to-back bookings do not
+warn, and undated to-dos are ignored since they have no time span. If the check
+itself fails the booking proceeds: a warning is an aid, and losing it is not a
+reason to block a seller.
+
 Lookups search Pipedrive and let the seller reuse existing records. Organization
 search covers custom fields, so a customer can be found by organisationsnummer
 or personnummer and not only by name or address. The deal step creates any
@@ -133,7 +159,7 @@ download only. Document steps never create a deal.
 
 ## Still Needed From Client/Pipedrive
 
-- The three custom deal field API keys listed in `.env.example`. Deal creation
+- The four custom deal field API keys listed in `.env.example`. Deal creation
   is blocked until those mappings are configured.
 - ~~Where organisationsnummer/personnummer is stored~~ — resolved. It is the
   custom organization field `Org. Nummer`; website is a custom field too, since
