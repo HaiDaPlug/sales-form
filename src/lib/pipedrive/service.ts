@@ -365,10 +365,79 @@ export async function getOrganizationFields() {
   return pipedriveRequest<AnyRecord[]>("/organizationFields");
 }
 
+const STOCKHOLM_TIME_ZONE = "Europe/Stockholm";
+
+const stockholmDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: STOCKHOLM_TIME_ZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
+/**
+ * Pipedrive stores an activity's bare `due_date`/`due_time` as UTC and its
+ * calendar localizes them for the viewer. The wizard captures Swedish wall
+ * time, so convert it at this boundary; a fixed offset would be wrong across
+ * daylight-saving changes and around midnight.
+ */
+function stockholmMeetingTimeAsUtc(date: string, time: string): { date: string; time: string } {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const requestedWallTime = Date.UTC(year, month - 1, day, hour, minute);
+  let instant = requestedWallTime;
+
+  // Reconcile the candidate instant with how Stockholm renders it. A second
+  // pass handles the offset change on DST transition dates without hardcoding
+  // either CET or CEST.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = stockholmDateTimeParts(instant);
+    const renderedWallTime = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+    const adjustment = requestedWallTime - renderedWallTime;
+
+    if (adjustment === 0) return utcDateTimeParts(instant);
+    instant += adjustment;
+  }
+
+  // This can only occur for a local clock time skipped by the spring DST jump.
+  throw new Error(`Klockslaget ${date} ${time} finns inte i tidszonen ${STOCKHOLM_TIME_ZONE}.`);
+}
+
+function stockholmDateTimeParts(instant: number) {
+  const parts = Object.fromEntries(
+    stockholmDateTimeFormatter
+      .formatToParts(new Date(instant))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
+  );
+
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute
+  };
+}
+
+function utcDateTimeParts(instant: number): { date: string; time: string } {
+  const value = new Date(instant);
+  const year = String(value.getUTCFullYear()).padStart(4, "0");
+  const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(value.getUTCDate()).padStart(2, "0");
+  const hour = String(value.getUTCHours()).padStart(2, "0");
+  const minute = String(value.getUTCMinutes()).padStart(2, "0");
+
+  return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
+}
+
 export function buildMeetingActivityPayload(
   data: MeetingStepInput,
   parties: ResolvedMeetingParties
 ): PipedriveActivityPayload {
+  const pipedriveTime = stockholmMeetingTimeAsUtc(data.date, data.time);
   const note = [
     data.agenda,
     data.technicianNotes ? `IT-tekniker: ${data.technicianNotes}` : "",
@@ -381,8 +450,8 @@ export function buildMeetingActivityPayload(
     // A blank meeting type would read "Möte: " on the activity.
     subject: data.meetingType ? `Möte: ${data.meetingType}` : "Möte",
     type: "meeting",
-    due_date: data.date,
-    due_time: data.time,
+    due_date: pipedriveTime.date,
+    due_time: pipedriveTime.time,
     duration: minutesToPipedriveDuration(data.durationMinutes),
     // Resolved IDs are passed in rather than read from `data`, so the payload
     // cannot be built with the undefined form IDs that previously left every

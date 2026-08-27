@@ -369,6 +369,36 @@ describe("partial resolution failures preserve created records", () => {
 });
 
 describe("buildMeetingActivityPayload", () => {
+  it("converts Stockholm summer time to UTC for Pipedrive Calendar", () => {
+    const payload = buildMeetingActivityPayload(
+      meetingParties({ date: "2026-08-19", time: "16:10" }),
+      { personId: 11, createdPerson: true, createdOrganization: false }
+    );
+
+    expect(payload.due_date).toBe("2026-08-19");
+    expect(payload.due_time).toBe("14:10");
+  });
+
+  it("converts Stockholm winter time with the standard-time offset", () => {
+    const payload = buildMeetingActivityPayload(
+      meetingParties({ date: "2026-01-19", time: "16:10" }),
+      { personId: 11, createdPerson: true, createdOrganization: false }
+    );
+
+    expect(payload.due_date).toBe("2026-01-19");
+    expect(payload.due_time).toBe("15:10");
+  });
+
+  it("moves the Pipedrive due date back when UTC conversion crosses midnight", () => {
+    const payload = buildMeetingActivityPayload(
+      meetingParties({ date: "2026-06-02", time: "00:30" }),
+      { personId: 11, createdPerson: true, createdOrganization: false }
+    );
+
+    expect(payload.due_date).toBe("2026-06-01");
+    expect(payload.due_time).toBe("22:30");
+  });
+
   it("folds agenda, technician notes and internal comment into one note", () => {
     const payload = buildMeetingActivityPayload(
       meetingParties({ internalComment: "Ring först" }),

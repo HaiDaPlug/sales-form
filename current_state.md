@@ -1,5 +1,43 @@
 # Current State
 
+## 2026-08-27 — Pipedrive meeting times corrected for Stockholm timezone; 210 tests pass
+
+A live comparison of form-created activities `4505` and `4506` isolated the
+meeting-time shift. The form submitted `2026-08-19 16:10`, and Pipedrive's API
+stored `due_time: 16:10`, but Pipedrive Calendar displayed each activity as
+`18:10–19:10`. Calendar sync was inactive, and both the viewing browser and the
+assigned Pipedrive user were configured for `Europe/Stockholm` (`UTC+02:00`).
+Pipedrive Calendar was therefore localizing the bare API time as though it were
+UTC.
+
+`buildMeetingActivityPayload` now converts the seller's Stockholm wall-clock
+date and time to UTC immediately before creating the activity. The conversion
+uses `Intl.DateTimeFormat` with `Europe/Stockholm`, so it follows CET/CEST rather
+than subtracting a fixed number of hours, and it adjusts `due_date` when an
+early-morning meeting crosses into the previous UTC date. A local clock time
+skipped by the spring DST transition is rejected instead of silently moved.
+
+Three regression tests cover the observed summer case (`16:10` → `14:10`), the
+winter offset (`16:10` → `15:10`), and a midnight rollover (`00:30` on June 2 →
+`22:30` on June 1). Verification after the change:
+
+- `npm test` — **210/210 pass** across twelve files for the pushed tree
+  (the broader working tree currently has 218 tests across thirteen files).
+- `npm run typecheck` — passes.
+- `npm run build` — passes.
+- ESLint on `service.ts` and `service.test.ts` — passes.
+- `git diff --check` — passes.
+
+The full-project lint command was stopped after it stalled without output; the
+two files changed for this fix were linted directly. No live post-fix booking
+was created because that would add another real Pipedrive activity.
+
+### Open item
+
+The IT-technician selection remains separate from this timezone fix. It is not
+currently assigned to the Pipedrive activity and needs its own product decision
+about activity ownership or participation.
+
 ## 2026-08-17 — S01 closed, CI added, organization identity persisted; 181 tests pass
 
 Three pieces of work, each on its own branch and PR rather than direct commits
