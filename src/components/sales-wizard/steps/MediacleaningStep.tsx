@@ -1,4 +1,4 @@
-import { CheckLabel, FormSection, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import { CheckLabel, FieldLabel, FormSection, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
 import { LookupBox } from "@/components/sales-wizard/LookupBox";
 import { SupplierEditor } from "@/components/sales-wizard/SupplierEditor";
 import { toggleDocumentType } from "@/components/sales-wizard/utils";
@@ -59,12 +59,12 @@ export function MediacleaningStep({ data, onChange }: StepProps<MediacleaningSte
       <p className="hint">{describeTarget(hasDeal, hasOrganization, Boolean(data.createOrganization))}</p>
 
       <FormSection title="Kund och dokument">
-        <TextField label="Företagsnamn/kundnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
-        <TextField label="Organisationsnummer/personnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
-        <TextField label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
-        <TextField label="Ort" value={data.city} onChange={(city) => onChange({ ...data, city })} />
+        <TextField required label="Företagsnamn/kundnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
+        <TextField required label="Organisationsnummer/personnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
+        <TextField required label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
+        <TextField required label="Ort" value={data.city} onChange={(city) => onChange({ ...data, city })} />
         <div className="field full">
-          <label>Dokument</label>
+          <FieldLabel label="Dokument" required />
           <div className="checks">
             <CheckLabel
               label="Uppsägning"

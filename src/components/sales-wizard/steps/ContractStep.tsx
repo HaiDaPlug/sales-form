@@ -52,24 +52,24 @@ export function ContractStep({
       </p>
 
       <FormSection title="Avtal">
-        <TextField label="Företagsnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
-        <TextField label="Organisationsnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
-        <TextField label="Firmatecknare/kontaktperson" value={data.signerName} onChange={(signerName) => onChange({ ...data, signerName })} />
-        <TextField label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
+        <TextField required label="Företagsnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
+        <TextField required label="Organisationsnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
+        <TextField required label="Firmatecknare/kontaktperson" value={data.signerName} onChange={(signerName) => onChange({ ...data, signerName })} />
+        <TextField required label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
         <ReferenceSelect
           label="Säljare"
           value={data.sellerId}
-          options={reference.users}
+          options={reference.sellers}
           loading={reference.loading}
           error={reference.error}
           onChange={(sellerId) => {
             // The contract prints the seller's name, so keep it in sync.
-            const seller = reference.users.find((user) => String(user.id) === sellerId);
+            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
             onChange({ ...data, sellerId, sellerName: seller?.name ?? data.sellerName });
           }}
         />
-        <TextField label="Säljare namn" value={data.sellerName} onChange={(sellerName) => onChange({ ...data, sellerName })} />
-        <TextField label="Pris/kostnad" type="number" value={String(data.price)} onChange={(price) => onChange({ ...data, price: Number(price) })} />
+        <TextField required label="Säljare namn" value={data.sellerName} onChange={(sellerName) => onChange({ ...data, sellerName })} />
+        <TextField required label="Pris/kostnad" type="number" value={String(data.price)} onChange={(price) => onChange({ ...data, price: Number(price) })} />
         <SelectField
           label="Betalningsintervall"
           value={data.paymentInterval}
@@ -80,8 +80,9 @@ export function ContractStep({
           ]}
           onChange={(paymentInterval) => onChange({ ...data, paymentInterval: paymentInterval as ContractStepData["paymentInterval"] })}
         />
-        <TextField label="Bindningstid månader" type="number" value={String(data.bindingPeriodMonths)} onChange={(bindingPeriodMonths) => onChange({ ...data, bindingPeriodMonths: Number(bindingPeriodMonths) })} />
+        <TextField required label="Bindningstid månader" type="number" value={String(data.bindingPeriodMonths)} onChange={(bindingPeriodMonths) => onChange({ ...data, bindingPeriodMonths: Number(bindingPeriodMonths) })} />
         <TextArea
+          required
           className="full"
           label="Inkluderade tjänster, en per rad"
           value={data.includedServices.join("\n")}

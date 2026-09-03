@@ -3,8 +3,13 @@ import type { MediacleaningStepData, PersonRef } from "@/lib/crm/types";
 import type { FieldConflict } from "@/components/sales-wizard/LookupBox";
 import type { SearchHit } from "@/lib/pipedrive/types";
 
+/**
+ * Every schema message already names its field in Swedish ("Agenda krävs"), so the
+ * field path would only repeat it as jargon. Duplicates are dropped because two
+ * fields can fail the same way.
+ */
 export function formatZodErrors(error: ZodError) {
-  return error.issues.map((issue) => `${issue.path.join(".") || "form"}: ${issue.message}`);
+  return [...new Set(error.issues.map((issue) => issue.message))];
 }
 
 export function toggleDocumentType(

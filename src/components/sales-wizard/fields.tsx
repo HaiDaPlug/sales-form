@@ -9,6 +9,40 @@ export type StepProps<T> = {
   reference: ReferenceData;
 };
 
+/**
+ * A field label, with the asterisk that marks a value the step cannot be
+ * submitted without.
+ *
+ * Required-ness lives in the zod schemas; this only mirrors it, so a field is
+ * marked when — and only when — its schema rejects a blank value. Fields that
+ * always carry a usable value (a number input defaulting to 0, a select with a
+ * default) stay unmarked even though the schema lists them: an asterisk that
+ * never blocks anything teaches the seller to ignore the ones that do.
+ *
+ * The asterisk is hidden from screen readers; `aria-required` on the control
+ * itself carries the same information without being read as punctuation.
+ */
+export function FieldLabel({
+  label,
+  required,
+  htmlFor
+}: {
+  label: string;
+  required?: boolean;
+  htmlFor?: string;
+}) {
+  return (
+    <label htmlFor={htmlFor}>
+      {label}
+      {required && (
+        <span className="required-mark" aria-hidden="true">
+          *
+        </span>
+      )}
+    </label>
+  );
+}
+
 export function FormSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="section">
@@ -23,18 +57,25 @@ export function TextField({
   value,
   onChange,
   type = "text",
-  className
+  className,
+  required
 }: {
   label: string;
   value?: string;
   onChange: (value: string) => void;
   type?: string;
   className?: string;
+  required?: boolean;
 }) {
   return (
     <div className={`field ${className ?? ""}`}>
-      <label>{label}</label>
-      <input type={type} value={value ?? ""} onChange={(event) => onChange(event.target.value)} />
+      <FieldLabel label={label} required={required} />
+      <input
+        type={type}
+        value={value ?? ""}
+        aria-required={required || undefined}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </div>
   );
 }
@@ -43,17 +84,23 @@ export function TextArea({
   label,
   value,
   onChange,
-  className
+  className,
+  required
 }: {
   label: string;
   value?: string;
   onChange: (value: string) => void;
   className?: string;
+  required?: boolean;
 }) {
   return (
     <div className={`field ${className ?? ""}`}>
-      <label>{label}</label>
-      <textarea value={value ?? ""} onChange={(event) => onChange(event.target.value)} />
+      <FieldLabel label={label} required={required} />
+      <textarea
+        value={value ?? ""}
+        aria-required={required || undefined}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </div>
   );
 }
@@ -62,17 +109,19 @@ export function SelectField({
   label,
   value,
   options,
-  onChange
+  onChange,
+  required
 }: {
   label: string;
   value: string;
   options: Array<string | { value: string; label: string }>;
   onChange: (value: string) => void;
+  required?: boolean;
 }) {
   return (
     <div className="field">
-      <label>{label}</label>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <FieldLabel label={label} required={required} />
+      <select value={value} aria-required={required || undefined} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => {
           const value = typeof option === "string" ? option : option.value;
           const label = typeof option === "string" ? option : option.label;
@@ -105,7 +154,8 @@ export function ReferenceSelect({
   error,
   placeholder = "Välj...",
   disabledHint,
-  className
+  className,
+  required
 }: {
   label: string;
   value?: string | number;
@@ -117,6 +167,7 @@ export function ReferenceSelect({
   /** Shown instead of the list when a prerequisite is missing (e.g. no pipeline). */
   disabledHint?: string;
   className?: string;
+  required?: boolean;
 }) {
   const current = value === undefined || value === null ? "" : String(value);
   const fieldId = `ref-${label.replace(/\s+/g, "-").toLowerCase()}`;
@@ -124,7 +175,7 @@ export function ReferenceSelect({
   if (disabledHint) {
     return (
       <div className={`field ${className ?? ""}`}>
-        <label htmlFor={fieldId}>{label}</label>
+        <FieldLabel label={label} required={required} htmlFor={fieldId} />
         <select id={fieldId} value="" disabled>
           <option value="">{disabledHint}</option>
         </select>
@@ -135,7 +186,7 @@ export function ReferenceSelect({
   if (loading) {
     return (
       <div className={`field ${className ?? ""}`}>
-        <label htmlFor={fieldId}>{label}</label>
+        <FieldLabel label={label} required={required} htmlFor={fieldId} />
         <select id={fieldId} value="" disabled>
           <option value="">Hämtar...</option>
         </select>
@@ -147,8 +198,14 @@ export function ReferenceSelect({
   if (error || options.length === 0) {
     return (
       <div className={`field ${className ?? ""}`}>
-        <label htmlFor={fieldId}>{label}</label>
-        <input id={fieldId} value={current} onChange={(event) => onChange(event.target.value)} placeholder="ID" />
+        <FieldLabel label={label} required={required} htmlFor={fieldId} />
+        <input
+          id={fieldId}
+          value={current}
+          aria-required={required || undefined}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="ID"
+        />
         <span className="field-hint">{error ? `Listan kunde inte hämtas — ange ID manuellt.` : "Inga val hittades — ange ID manuellt."}</span>
       </div>
     );
@@ -160,8 +217,13 @@ export function ReferenceSelect({
 
   return (
     <div className={`field ${className ?? ""}`}>
-      <label htmlFor={fieldId}>{label}</label>
-      <select id={fieldId} value={current} onChange={(event) => onChange(event.target.value)}>
+      <FieldLabel label={label} required={required} htmlFor={fieldId} />
+      <select
+        id={fieldId}
+        value={current}
+        aria-required={required || undefined}
+        onChange={(event) => onChange(event.target.value)}
+      >
         <option value="">{placeholder}</option>
         {missingCurrent && <option value={current}>{`Okänt ID ${current}`}</option>}
         {options.map((option) => (

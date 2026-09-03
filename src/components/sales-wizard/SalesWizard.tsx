@@ -11,12 +11,14 @@ import {
   meetingStepSchema
 } from "@/lib/crm/schemas";
 import type { CrmRecordId, SubmitState, WizardData } from "@/lib/crm/types";
+import type { MeetingOverlap } from "@/lib/pipedrive/types";
 import type { WorkflowKind } from "@/lib/history/types";
 import { ContractStep } from "@/components/sales-wizard/steps/ContractStep";
 import { DealStep } from "@/components/sales-wizard/steps/DealStep";
 import { MediacleaningStep } from "@/components/sales-wizard/steps/MediacleaningStep";
 import { MeetingStep } from "@/components/sales-wizard/steps/MeetingStep";
 import { HistoryPanel } from "@/components/sales-wizard/HistoryPanel";
+import { OverlapDialog } from "@/components/sales-wizard/OverlapDialog";
 import {
   initialContract,
   initialDeal,
@@ -47,6 +49,9 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
   const [stepResults, setStepResults] = useState<Partial<Record<WorkflowKind, StepResult>>>({});
   const [historyToken, setHistoryToken] = useState(0);
+  /** Non-empty while the overlap dialog is waiting on the seller's decision. */
+  const [pendingOverlaps, setPendingOverlaps] = useState<MeetingOverlap[]>([]);
+  const [checkingOverlaps, setCheckingOverlaps] = useState(false);
   // Fetched once and shared: three of the four steps need the same lists.
   const reference = useReferenceData();
 
@@ -138,7 +143,10 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
     if (index === 3) {
       const sellerId = String(deal.sellerId ?? meeting.sellerId ?? "");
-      const sellerName = reference.users.find((user) => String(user.id) === sellerId)?.name;
+      // Resolved against the seller options, not `users`: the contract prints
+      // the seller's name, and the sellers are custom-field options.
+      const sellerName =
+        reference.sellers.find((option) => String(option.id) === sellerId)?.name ?? meeting.sellerName;
 
       setContract((current) => ({
         ...current,
@@ -156,11 +164,74 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
   }
 
+  /**
+   * Books the meeting, pausing on a clash with existing activities.
+   *
+   * The check runs before `validateAndSubmit` so nothing is created while the
+   * seller decides — an overlap is usually a re-submitted booking, and the
+   * activity would already exist by the time a warning after the fact appeared.
+   *
+   * A failed check never blocks the booking: an overlap warning is an aid, and
+   * losing Pipedrive's activity list is not a reason to stop a seller working.
+   */
+  async function submitMeeting() {
+    if (stepResults.meeting || submitState.status === "loading" || checkingOverlaps) return;
+
+    const parsed = meetingStepSchema.safeParse(meeting);
+
+    // Let the normal path report validation errors rather than checking
+    // overlaps for a time that is not valid yet.
+    if (parsed.success) {
+      // Tracked separately from `submitState` so the button can report the
+      // check without `validateAndSubmit` mistaking it for a submit already in
+      // flight and refusing to run.
+      setCheckingOverlaps(true);
+
+      try {
+        const overlaps = await findOverlaps(parsed.data);
+
+        if (overlaps.length > 0) {
+          setPendingOverlaps(overlaps);
+          return;
+        }
+      } finally {
+        setCheckingOverlaps(false);
+      }
+    }
+
+    await validateAndSubmit(meetingStepSchema, meeting, "/api/pipedrive/activities/meeting", "meeting");
+  }
+
+  async function findOverlaps(data: { date: string; time: string; durationMinutes: number }) {
+    const query = new URLSearchParams({
+      date: data.date,
+      time: data.time,
+      durationMinutes: String(data.durationMinutes)
+    });
+
+    const personId = meeting.person.id ?? wizardData.meeting?.person?.id;
+    const organizationId = meeting.organization?.id ?? wizardData.meeting?.organization?.id;
+
+    if (personId !== undefined) query.set("personId", String(personId));
+    if (organizationId !== undefined) query.set("organizationId", String(organizationId));
+
+    try {
+      const response = await fetch(`/api/pipedrive/activities/overlaps?${query}`);
+      const payload = (await response.json()) as { ok: boolean; data?: MeetingOverlap[] };
+
+      if (!response.ok || !payload.ok) return [];
+
+      return payload.data ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   async function submitCurrentStep() {
     resetFeedback();
 
     if (activeStep === 0) {
-      await validateAndSubmit(meetingStepSchema, meeting, "/api/pipedrive/activities/meeting", "meeting");
+      await submitMeeting();
     }
 
     if (activeStep === 1) {
@@ -448,6 +519,9 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
             <p className="hint">
               Varje steg kan återanvända kunddata, men bara steget Skapa affär får skapa en Pipedrive-affär.
             </p>
+            <p className="hint required-legend">
+              Fält märkta med <span className="required-mark">*</span> måste fyllas i innan steget kan köras.
+            </p>
           </div>
           <div className="status-pill">Utkastläge</div>
         </div>
@@ -498,10 +572,14 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
                   <button
                     className="btn primary"
                     type="button"
-                    disabled={submitState.status === "loading"}
+                    disabled={submitState.status === "loading" || checkingOverlaps}
                     onClick={submitCurrentStep}
                   >
-                    {submitState.status === "loading" ? "Skickar..." : "Validera och skicka"}
+                    {checkingOverlaps
+                      ? "Kontrollerar tiden..."
+                      : submitState.status === "loading"
+                        ? "Skickar..."
+                        : "Validera och skicka"}
                   </button>
                 )}
                 <button
@@ -547,6 +625,24 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
           </aside>
         </div>
       </section>
+
+      {pendingOverlaps.length > 0 && (
+        <OverlapDialog
+          overlaps={pendingOverlaps}
+          onCancel={() => setPendingOverlaps([])}
+          onConfirm={() => {
+            // Cleared first so the dialog cannot be double-confirmed while the
+            // booking request is in flight.
+            setPendingOverlaps([]);
+            void validateAndSubmit(
+              meetingStepSchema,
+              meeting,
+              "/api/pipedrive/activities/meeting",
+              "meeting"
+            );
+          }}
+        />
+      )}
     </main>
   );
 }
