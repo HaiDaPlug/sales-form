@@ -1110,10 +1110,46 @@ textarea:disabled {
   background: var(--panel-muted);
 }
 
-.lookup-row {
+.lookup-field {
+  position: relative;
+}
+
+/* Carries the search state for screen readers. The visible copy lives in the
+   dropdown, which mounts and unmounts and so cannot be a live region. */
+.lookup-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Hits float over the form instead of sitting in it: ten results pushing the
+   fields below down the page was worse than the duplicate they prevent. */
+.lookup-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+  max-height: 292px;
+  padding: 10px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  animation: picker-in 0.14s var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lookup-menu {
+    animation: none;
+  }
 }
 
 .results {
@@ -1859,11 +1895,6 @@ textarea:disabled {
     padding: 14px;
   }
 
-  .lookup-row {
-    grid-template-columns: 1fr;
-  }
-
-  .lookup-row .btn,
   .button-group .btn {
     width: 100%;
   }
