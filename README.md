@@ -1,37 +1,93 @@
 # Digital Kontakt Sales Portal
 
-Internal sales workflow portal for Digital Kontakt. The app guides sellers through four separate workflows while using Pipedrive as the CRM record system:
+Internal sales workflow portal for Digital Kontakt. The app guides sellers
+through four workflows while using Pipedrive as the CRM record system:
 
-1. Meeting booking with IT technician
-2. Create deal in Pipedrive
+1. Meeting booking
+2. Create prospect
 3. Mediacleaning cancellation documents
 4. Contract generation
 
-Every run is recorded in a shared history so sellers can track and own their
-work rather than submitting into a void.
+A fifth page, `/status`, shows each seller what Pipedrive currently assigns to
+them. Every run is recorded in a history the seller can see, so work is
+traceable rather than submitted into a void.
+
+## The division of labour
+
+The portal is the sellers' restricted interface. **Pipedrive is the back
+office.** A seller creates prospects, contacts, organizations and meetings, and
+supplies the evidence a sale rests on. A separate employee quality-checks that
+evidence in Pipedrive and converts the prospect into a deal. That conversion is
+the approval, and it happens nowhere near this application.
+
+A "prospekt" is a Pipedrive **Lead**. Leads inherit the deal custom fields, so
+the invoicing values, the seller assignment and the evidence status live on the
+prospect and follow it into the deal it becomes.
 
 ## Hard Business Rules
 
-- Meeting booking must not create a deal.
-- Mediacleaning must not create a deal.
-- Contract generation must not create a deal.
-- Only the explicit Create Deal step may create a Pipedrive deal.
-- Deal creation is blocked unless the three Pipedrive fields the account
-  currently supports are mapped: Faktura Start, Fakturagrupp and Viktigast för
-  kunden. A missing key would otherwise silently drop those values.
-- Meeting invitations use Pipedrive Scheduler. Configure a public booking link
-  with `PIPEDRIVE_SCHEDULER_URL`; a Scheduler booking creates the Pipedrive
-  activity itself. The form's activity submission remains for an already
-  agreed date/time and must not be used as a duplicate after Scheduler booking.
-- Mediacleaning document generation must still work as a local/downloadable output even if no Pipedrive deal or organization target exists.
-- Mediacleaning combines one cancellation page per supplier and its optional
-  agreement summary in one PDF. Contract generation creates its own PDF unless
-  the seller explicitly selects the combined contract + Mediacleaning package.
-- Existing CRM people and organizations are read-only. The application exposes
-  no update or delete method and refuses to reassign an existing contact to a
-  different organization.
-- Pipedrive credentials must stay server-side.
-- Pipedrive custom fields, pipeline IDs, stage IDs, seller IDs, and technician IDs are account-specific and must not be guessed.
+1. **No workflow creates a deal.** `createDeal` and its route operation are
+   deleted, not disabled — `src/lib/crm/boundaries.test.ts` fails if they come
+   back. Deals are read-only: Mediacleaning may attach a document to one.
+2. **No workflow converts a prospect or approves a sale.** No conversion
+   endpoint is called and no function for it exists, so a direct call to the
+   backend cannot reach one either.
+3. **The evidence status only advances on a completed action.** "Ljudfil
+   uppladdad" is written after Pipedrive confirms the file, never before.
+   "Väntar på signering" and "Avtal signerat" describe the back-office's own
+   acts and are only ever read.
+4. **Existing CRM records are read-only**, with one exception: the evidence
+   field on a prospect the portal created. There is no delete method anywhere.
+5. **Every read is scoped to the logged-in seller**, server-side, from the
+   current value of "Affärens säljare" in Pipedrive.
+6. A prospect requires an organization; a meeting may be booked from contact
+   details alone.
+7. Mediacleaning and contract generation require a linked organization and a
+   contact person chosen from it. The document is uploaded to the
+   **organization**, its note to the prospect, else the deal, else the
+   organization.
+8. Meeting bookings are checked against the technicians' calendars when the
+   slot is chosen **and** again when the booking is sent.
+
+## Who the sellers are
+
+The four sellers have no Pipedrive login. They are options 72–75 on the custom
+deal field **"Affärens säljare"**, and that option id is what assigns every
+record. Each seller therefore has a portal account that carries their option
+id, held in `APP_USERS`:
+
+```json
+[{"username":"filippa","name":"Filippa","sellerOptionId":72,"passwordHash":"scrypt$..."}]
+```
+
+Hashes come from `npm run hash-password`. The signed session carries the option
+id, and **no request body ever names a seller** — a seller cannot act in a
+colleague's name, whatever they send.
+
+An administrator changes an assignment by editing "Affärens säljare" in
+Pipedrive, per record or in bulk. The portal reads that on every request, so a
+transferred customer moves between sellers immediately. "Ursprunglig säljare"
+records who created the prospect and is never updated, so a transfer preserves
+the origin.
+
+## Evidence and quality control
+
+A sale rests on one of two things, chosen when the prospect is created:
+
+- **A recording of the call.** The browser uploads it to private Vercel Blob
+  storage — a Vercel function cannot receive more than 4.5 MB — and the server
+  moves it to Pipedrive, attached to both the prospect and the organization.
+  Only then does the prospect read "Ljudfil uppladdad".
+- **A contract for digital signature.** The prospect starts as "Digital
+  signering krävs". The contract step uploads the PDF to the organization and
+  creates a task for the back-office, who send it with Smart Docs and set the
+  status afterwards.
+
+Smart Docs has no public API and the sellers cannot log in to Pipedrive, so the
+portal cannot send a document for signature or observe a signature. That step
+is a person's, deliberately.
+
+Evidence is not approval. The status page reports the two separately.
 
 ## Local Setup
 
@@ -41,154 +97,62 @@ cp .env.example .env.local
 npm run dev
 ```
 
-`APP_ACCESS_PASSWORD` and `APP_SESSION_SECRET` are required to log in — without
-them the app stays locked. Fill in the real Pipedrive API token and custom field
-keys before creating deals. Do not commit real secrets.
+`APP_SESSION_SECRET` and at least one account in `APP_USERS` are required to log
+in. Without `DATABASE_URL` the run history falls back to a local JSON Lines
+file and the supplier registry is served read-only — fine for development,
+impossible on Vercel, whose filesystem is read-only.
 
-## Access
+## Deployment notes
 
-The portal is behind a shared-password gate (`src/proxy.ts`). Everything is
-private by default; only the login page and login endpoint are public.
+- **Neon Postgres** holds the run history and the supplier registry. The tables
+  are created on first use; there is no migration step.
+- **Vercel Blob** stages audio uploads. Without `BLOB_READ_WRITE_TOKEN` the
+  browser posts the file straight to the route instead, which only works on a
+  host with no request-size limit.
+- Custom field keys are account-specific hashes read from `GET /dealFields`.
+  Prospect creation fails loudly if one is missing, rather than dropping the
+  value.
 
-The name entered at login labels that person's runs in the history. To move to
-SSO or per-user accounts later, replace `verifyCredentials` and
-`getSessionSubject` in `src/lib/auth/session.ts` plus the login form — the gate,
-cookie handling, and every route stay unchanged.
+## Meeting availability
 
-## History
+Pipedrive's Scheduler has no public API for its availability, so the portal
+computes it: the configured working window, minus everything already booked in
+the technicians' calendars (`PIPEDRIVE_TECHNICIAN_USER_IDS`). A slot survives
+while one technician is free, and the booking is assigned to them. The check
+runs again at submit time and refuses a slot taken in the meantime — the
+earlier "book anyway" escape is gone, and it was what produced the duplicate
+activities already in the account.
 
-Every workflow run is appended to `.data/history.jsonl` (gitignored) and shown
-at `/historik`: who ran it, when, for which customer, the resulting Pipedrive
-IDs, and any failure reason. Set `HISTORY_FILE_PATH` to relocate it.
+Times are Swedish wall-clock throughout. Pipedrive stores activities in UTC, so
+every comparison converts first; a fixed offset would be wrong across
+daylight-saving changes and around midnight.
 
-There is no database. The store exposes two functions (`listHistory`,
-`recordHistory`), so moving to a real database means rewriting
-`src/lib/history/store.ts` alone.
+## Documents
 
-## Status
+Mediacleaning produces one cancellation per supplier in a single PDF, with the
+customer's identity number and the supplier's own details. Suppliers come from
+a shared registry a seller can add to; most of the shipped list still has no
+organisationsnummer, and those stay blank rather than guessed, because a wrong
+identity number on a cancellation is worse than none.
 
-The four workflows validate, gate access, record history and preserve the rule
-that only the explicit deal step may create a deal. The current implementation:
+Both document workflows are still marked `UTKAST`. The client owes the final
+legal wording before anything is sent to a customer. The Mediacleaning copy is
+isolated in `src/lib/pdf/templates/mediacleaning.ts` so an approved version can
+be swapped in without touching pagination or upload logic.
 
-- creates missing deal people and organizations, reuses matching records and
-  resolves the first stage in the selected pipeline when no stage is chosen;
-- validates the documented mandatory contact, organization, invoicing, seller
-  and customer-priority fields before deal creation;
-- creates real, parseable PDF drafts for Mediacleaning and contract generation;
-- creates one cancellation page per supplier and can include the Mediacleaning
-  agreement summary in the same PDF;
-- can explicitly append a completed Mediacleaning document set to the contract
-  PDF, while keeping the two workflows separate by default;
-- exposes the configured Pipedrive Scheduler link in the meeting step;
-- uploads document PDFs to the selected deal first, otherwise the organization,
-  and creates the corresponding Pipedrive note;
-- still returns the local PDF when no CRM target exists or attachment fails.
+## Still needed from the client
 
-The app is not yet production-ready. The Pipedrive Scheduler link must be
-configured, the Mediacleaning wording still needs confirmation against the
-client's templates, and live deal-create permission must be confirmed in the
-Pipedrive account.
-
-## Form values and Pipedrive mappings
-
-Sellers enter contract length, contract start, monthly cost, start fee, total
-deal value, binding period and cancellation period directly in the app. These
-values are form data, not environment variables.
-
-Environment variables under `PIPEDRIVE_FIELD_*` contain only account-specific
-Pipedrive API field keys. The current account exposes writable fields for
-Faktura Start, Fakturagrupp, Viktigast för kunden and Affärens säljare, so those
-four values are written to the deal. The other commercial values remain
-available to the contract workflow and generated contract, but are not invented
-as Pipedrive custom fields. If the account later adds those fields, mappings can
-be added without moving seller-entered values into environment configuration.
-
-Organizations have two custom fields of their own: `Org. Nummer`, which holds
-organisationsnummer or personnummer, and `Webbplats`. Both are written whenever
-this app creates an organization, from any workflow. They differ from the deal
-keys in one way that matters: a missing deal key fails the request, because the
-value would otherwise be dropped from a deal the seller believes is complete,
-while a missing organization key only skips that field so meetings and deals
-keep working in an account that has not mapped them.
-
-## Choosing records instead of typing IDs
-
-Seller, IT technician, pipeline, and stage are dropdowns loaded from the
-Pipedrive account. Stages are filtered by the selected pipeline, and changing
-pipeline clears the stage so the two cannot disagree. If a list cannot be loaded
-the field falls back to a plain text input, so a known ID can still be entered.
-
-Sellers are the exception to "loaded from the account's users": they have no
-Pipedrive login, and exist as options on the custom deal field `Affärens
-säljare`. The dropdown reads those options live from `GET /dealFields`, so
-editing them in Pipedrive changes the form without a redeploy. Because an option
-id is not a user id, it is written to that custom field and never to `user_id` —
-sending it as an owner made Pipedrive reject the record as an unknown user.
-Activities have no equivalent custom field in this account, so a booked meeting
-is owned by the API token's user and names its seller on the first line of the
-activity note instead.
-
-## Duplicate and double-booking protection
-
-Submitting the meeting step checks Pipedrive for activities whose time overlaps
-the booking, and stops on a hit: a dialog lists what it clashes with and offers
-"avbryt och ändra tid" or "boka ändå". Nothing is created until the seller
-chooses, because an overlap is usually a re-submitted booking — the account
-already contains identical activity pairs made that way. The choice is not
-remembered; editing the time re-runs the check.
-
-The check spans every user's activities, not just the API token's own, and it
-compares in UTC — the form activities are stored in — converting the seller's
-Swedish time first. Touching edges are allowed, so back-to-back bookings do not
-warn, and undated to-dos are ignored since they have no time span. If the check
-itself fails the booking proceeds: a warning is an aid, and losing it is not a
-reason to block a seller.
-
-Lookups search Pipedrive and let the seller reuse existing records. Organization
-search covers custom fields, so a customer can be found by organisationsnummer
-or personnummer and not only by name or address. The deal step creates any
-missing person or organization and links both to the deal. A created
-organization carries its identity number, website and address including the
-city; existing records are never edited. If an existing person already belongs to a
-different organization, the submission is stopped and the seller must correct
-the selection or create a new contact. If
-deal creation fails after those records were created, their IDs are returned
-and reused on retry. Mediacleaning can use an existing deal or organization,
-explicitly create an organization without a deal, or continue with local PDF
-download only. Document steps never create a deal.
-
-## Still Needed From Client/Pipedrive
-
-- The four custom deal field API keys listed in `.env.example`. Deal creation
-  is blocked until those mappings are configured.
-- ~~Where organisationsnummer/personnummer is stored~~ — resolved. It is the
-  custom organization field `Org. Nummer`; website is a custom field too, since
-  the account uses it rather than Pipedrive's native `website`. Both keys are
-  optional (`PIPEDRIVE_FIELD_ORG_NUMBER`, `PIPEDRIVE_FIELD_ORG_WEBSITE`): an
-  unset key skips that field instead of failing the request, but the identity
-  number must be mapped for duplicate detection to work.
-- ~~Pipeline and stage IDs~~ — resolved. Read live from the account; Google
-  Digital Paket is pipeline `1`. Set `PIPEDRIVE_DEFAULT_PIPELINE_ID` /
-  `PIPEDRIVE_DEFAULT_STAGE_ID` only if a pre-selected default is wanted.
-- ~~Seller/user IDs~~ — resolved, read live from the account. Still open:
-  whether IT technicians are Pipedrive users or external contacts. Both work
-  today (dropdown for users, free-text name for externals).
-- A public general-availability or specific-times link copied from Pipedrive
-  Scheduler into `PIPEDRIVE_SCHEDULER_URL`.
-- Confirmation of the client's Mediacleaning templates and final Swedish
-  cancellation wording. Until then PDFs carry a prominent `UTKAST` marker.
-- Final legal payment and termination wording for the contract before it is
-  used for signing.
-- Confirmation that the explicit contract + Mediacleaning checkbox matches the
-  client's preferred combined-document workflow.
-
-## Mediacleaning template seam
-
-The draft wording is isolated in
-`src/lib/pdf/templates/mediacleaning.ts`. An approved client version can be
-added as a new `MediacleaningTemplate` without changing PDF pagination,
-Pipedrive upload logic or the sales form. Until approval, generated documents
-remain visibly marked `UTKAST`.
+- The Pipedrive user ids for the back-office/QC inbox and the technician pool.
+- Custom deal fields "Underlag" (four options, exactly as named in
+  `src/lib/crm/prospect.ts`) and "Ursprunglig säljare" (the same four sellers),
+  and their API keys.
+- Organisationsnummer for the shipped supplier list.
+- Final legal wording for the contract and the cancellation letters.
+- Confirmation that the Smart Docs template on the organization can carry
+  everything it needs, since prospect-level commercial values are not mirrored
+  onto the organization.
+- Deal `806` ("ZZ TEST seller field") still needs deleting by hand; the API
+  token lacks permission.
 
 ## Useful Checks
 
