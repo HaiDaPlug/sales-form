@@ -2,29 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { FieldLabel, TextField } from "@/components/sales-wizard/fields";
+import { KNOWN_SUPPLIERS } from "@/components/sales-wizard/suppliers";
 import type { SupplierSelection } from "@/lib/crm/types";
-
-/**
- * Suppliers the customer wants to cancel.
- *
- * The standard list covers the common Swedish directory services; anything
- * else is entered by hand via "Annan leverantör", which then requires a name
- * and a notice address because there is no known address to fall back on.
- */
-const KNOWN_SUPPLIERS = [
-  "Telia Sverige AB",
-  "Tele2 Sverige AB",
-  "Telenor Sverige AB",
-  "Eniro Group AB",
-  "Hitta.se",
-  "Merinfo Sverige AB",
-  "UC Affärsinformation AB",
-  "Generaxion AB",
-  "Nordiska Webbyrån AB",
-  "Advago AB",
-  "Servicefinder Sverige AB",
-  "Reco Sverige AB"
-];
 
 const OTHER_SUPPLIER = "__other__";
 
@@ -42,7 +21,7 @@ export function SupplierEditor({
     if (!term) return [];
 
     return KNOWN_SUPPLIERS.filter(
-      (name) =>
+      ({ name }) =>
         name.toLocaleLowerCase("sv").includes(term) &&
         !suppliers.some((supplier) => supplier.name === name)
     );
@@ -69,17 +48,18 @@ export function SupplierEditor({
         </div>
         {matches.length > 0 && (
           <ul className="results">
-            {matches.map((name) => (
+            {matches.map(({ name, noticeAddress }) => (
               <li key={name}>
                 <button
                   className="result-item"
                   type="button"
                   onClick={() => {
-                    onChange([...suppliers, { name, customerNumber: "", noticeAddress: "", email: "", comment: "" }]);
+                    onChange([...suppliers, { name, customerNumber: "", noticeAddress, email: "", comment: "" }]);
                     setSearch("");
                   }}
                 >
                   <span className="result-name">{name}</span>
+                  <span className="result-detail">{noticeAddress}</span>
                 </button>
               </li>
             ))}
@@ -103,12 +83,18 @@ export function SupplierEditor({
                     index,
                     value === OTHER_SUPPLIER
                       ? { isOther: true, name: "" }
-                      : { isOther: false, name: value, noticeAddress: "", email: "", comment: "" }
+                      : {
+                          isOther: false,
+                          name: value,
+                          noticeAddress: findNoticeAddress(value),
+                          email: "",
+                          comment: ""
+                        }
                   );
                 }}
               >
                 <option value="">Välj leverantör...</option>
-                {KNOWN_SUPPLIERS.map((name) => (
+                {KNOWN_SUPPLIERS.map(({ name }) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
@@ -167,4 +153,9 @@ export function SupplierEditor({
       </div>
     </section>
   );
+}
+
+/** Known suppliers ship with their notice address; "Välj leverantör..." clears it. */
+function findNoticeAddress(name: string): string {
+  return KNOWN_SUPPLIERS.find((supplier) => supplier.name === name)?.noticeAddress ?? "";
 }
