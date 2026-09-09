@@ -2,9 +2,11 @@ import type { CrmRecordId } from "@/lib/crm/types";
 import { PipedriveApiError } from "@/lib/pipedrive/client";
 import {
   assertDealBelongsToOrganization,
+  buildOrganizationPayload,
   createNote,
   createOrganization,
-  uploadFile
+  uploadFile,
+  type OrganizationDetails
 } from "@/lib/pipedrive/service";
 import type { GeneratedDocument } from "@/lib/pdf/service";
 
@@ -24,8 +26,12 @@ export type AttachmentTarget =
 export type AttachmentInput = {
   dealId?: CrmRecordId;
   organizationId?: CrmRecordId;
-  /** Customer details used when an organization has to be created first. */
-  createOrganizationFrom?: { name: string; address?: string };
+  /**
+   * Customer details used when an organization has to be created first (S17).
+   * Carries the identity number and city so a customer registered from
+   * Mediacleaning is stored as completely as one created from the deal step.
+   */
+  createOrganizationFrom?: OrganizationDetails;
 };
 
 export type AttachmentResult = {
@@ -68,10 +74,7 @@ export async function resolveAttachmentTarget(input: AttachmentInput): Promise<{
 
   // No organization yet, but the seller asked to create one (S17).
   if (!organizationId && input.createOrganizationFrom?.name) {
-    const created = await createOrganization({
-      name: input.createOrganizationFrom.name,
-      address: input.createOrganizationFrom.address
-    });
+    const created = await createOrganization(buildOrganizationPayload(input.createOrganizationFrom));
 
     const id = readId(created);
 

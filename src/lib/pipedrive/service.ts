@@ -3,6 +3,7 @@ import type { CrmRecordId } from "@/lib/crm/types";
 import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
 import { PipedriveApiError, pipedriveRequest } from "@/lib/pipedrive/client";
 import type {
+  MeetingOverlap,
   PipedriveActivityPayload,
   PipedriveDealPayload,
   PipedriveFilePayload,
@@ -55,19 +56,36 @@ export async function createPerson(payload: PipedrivePersonPayload) {
   });
 }
 
+/**
+ * Organization search, including the identity number.
+ *
+ * `custom_fields` is what makes an organisationsnummer or personnummer findable
+ * — the identity the acceptance scenarios lean on hardest for deduplication.
+ * Searching `name,address` alone returns nothing for an org number, because it
+ * is a custom field in this account rather than a native one. Verified against
+ * the live account: a known org number returns one hit with `custom_fields`
+ * included and zero without it.
+ */
 export async function searchOrganizations(term: string): Promise<SearchHit[]> {
   const envelope = await pipedriveRequest<PipedriveSearchEnvelope>("/organizations/search", {
-    query: { term, fields: "name,address", limit: MAX_SEARCH_RESULTS }
+    query: { term, fields: "name,address,custom_fields", limit: MAX_SEARCH_RESULTS }
   });
+
+  const { organizationNumber: organizationNumberKey } = getPipedriveConfig().organizationFields;
 
   return readSearchItems(envelope).map((item) => {
     const address = asString(item.address);
+    const organizationNumber = organizationNumberKey ? asString(item[organizationNumberKey]) : undefined;
 
     return {
       id: asRecordId(item.id),
       name: asString(item.name) ?? "Namnlös organisation",
-      detail: address,
-      address
+      // Shown under the name so the seller can tell apart two records with
+      // similar names — the identity number is the thing that distinguishes
+      // them.
+      detail: [organizationNumber, address].filter(Boolean).join(" · ") || undefined,
+      address,
+      organizationNumber
     };
   });
 }
@@ -77,6 +95,62 @@ export async function createOrganization(payload: PipedriveOrganizationPayload) 
     method: "POST",
     body: payload
   });
+}
+
+/** The customer details an organization is created from, in any workflow. */
+export type OrganizationDetails = {
+  name: string;
+  address?: string;
+  /** Appended to the address: the account has no editable city field. */
+  city?: string;
+  website?: string;
+  /** Organisationsnummer or personnummer, already normalized by the schema. */
+  organizationNumber?: string;
+};
+
+/**
+ * Builds the organization payload, including the account's custom fields.
+ *
+ * Every creation path goes through this, so identity cannot reach Pipedrive
+ * from one workflow and be dropped by another. Previously each caller passed
+ * `{ name, address }` inline and the organisationsnummer — mandatory on the
+ * deal form, and the strongest deduplication key the scenarios have — was
+ * never stored at all.
+ *
+ * An unmapped custom field is skipped rather than fatal. These keys are
+ * account-specific, and a deployment that has not configured them must still
+ * be able to book meetings and create deals.
+ */
+export function buildOrganizationPayload(details: OrganizationDetails): PipedriveOrganizationPayload {
+  const fields = getPipedriveConfig().organizationFields;
+
+  const payload: PipedriveOrganizationPayload = {
+    name: details.name,
+    // Pipedrive resolves one address string into its own components, so the
+    // city is folded in rather than sent separately — `address_locality` is
+    // derived and read-only.
+    address: joinAddress(details.address, details.city)
+  };
+
+  assignOrganizationField(payload, fields.organizationNumber, details.organizationNumber);
+  assignOrganizationField(payload, fields.website, details.website);
+
+  return payload;
+}
+
+/** Keeps "Storgatan 1" and "Stockholm" from becoming "Storgatan 1, " or ", Stockholm". */
+function joinAddress(address?: string, city?: string): string | undefined {
+  return [address?.trim(), city?.trim()].filter(Boolean).join(", ") || undefined;
+}
+
+function assignOrganizationField(
+  payload: PipedriveOrganizationPayload,
+  fieldKey: string | undefined,
+  value: string | undefined
+) {
+  if (fieldKey && value !== undefined && value.trim() !== "") {
+    payload[fieldKey] = value.trim();
+  }
 }
 
 export async function searchDeals(
@@ -229,6 +303,38 @@ export async function getUsers(): Promise<ReferenceOption[]> {
     .sort((a, b) => a.name.localeCompare(b.name, "sv"));
 }
 
+/**
+ * The sellers assignable to a deal.
+ *
+ * These are the options of the "Affärens säljare" custom deal field, not
+ * Pipedrive user accounts — the four sellers have no login of their own, so
+ * `/users` does not and will never list them. Reading the options live means
+ * editing them in Pipedrive updates the dropdown without a redeploy.
+ *
+ * Returns an empty list when the field key is unconfigured or the field has
+ * since been deleted, which the UI degrades into a free-text input rather than
+ * an empty dropdown.
+ */
+export async function getSellers(): Promise<ReferenceOption[]> {
+  const fieldKey = getPipedriveConfig().customFields.affarensSaljare;
+  if (!fieldKey) return [];
+
+  const fields = await pipedriveRequest<AnyRecord[]>("/dealFields");
+  const field = (fields ?? []).find((candidate) => candidate.key === fieldKey);
+  const options = Array.isArray(field?.options) ? field.options : [];
+
+  return options.map((option) => {
+    const record = asRecord(option);
+
+    return {
+      // Pipedrive stores an enum's value as the numeric option id, so that —
+      // not the label — is what the deal payload has to carry.
+      id: asRecordId(record?.id),
+      name: asString(record?.label) ?? "Namnlös säljare"
+    };
+  });
+}
+
 export async function getPipelines(): Promise<ReferenceOption[]> {
   const pipelines = await pipedriveRequest<AnyRecord[]>("/pipelines");
 
@@ -292,11 +398,214 @@ export async function getOrganizationFields() {
   return pipedriveRequest<AnyRecord[]>("/organizationFields");
 }
 
+const STOCKHOLM_TIME_ZONE = "Europe/Stockholm";
+
+const stockholmDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: STOCKHOLM_TIME_ZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
+/**
+ * Pipedrive stores an activity's bare `due_date`/`due_time` as UTC and its
+ * calendar localizes them for the viewer. The wizard captures Swedish wall
+ * time, so convert it at this boundary; a fixed offset would be wrong across
+ * daylight-saving changes and around midnight.
+ */
+function stockholmMeetingTimeAsUtc(date: string, time: string): { date: string; time: string } {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const requestedWallTime = Date.UTC(year, month - 1, day, hour, minute);
+  let instant = requestedWallTime;
+
+  // Reconcile the candidate instant with how Stockholm renders it. A second
+  // pass handles the offset change on DST transition dates without hardcoding
+  // either CET or CEST.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = stockholmDateTimeParts(instant);
+    const renderedWallTime = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+    const adjustment = requestedWallTime - renderedWallTime;
+
+    if (adjustment === 0) return utcDateTimeParts(instant);
+    instant += adjustment;
+  }
+
+  // This can only occur for a local clock time skipped by the spring DST jump.
+  throw new Error(`Klockslaget ${date} ${time} finns inte i tidszonen ${STOCKHOLM_TIME_ZONE}.`);
+}
+
+function stockholmDateTimeParts(instant: number) {
+  const parts = Object.fromEntries(
+    stockholmDateTimeFormatter
+      .formatToParts(new Date(instant))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
+  );
+
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute
+  };
+}
+
+function utcDateTimeParts(instant: number): { date: string; time: string } {
+  const value = new Date(instant);
+  const year = String(value.getUTCFullYear()).padStart(4, "0");
+  const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(value.getUTCDate()).padStart(2, "0");
+  const hour = String(value.getUTCHours()).padStart(2, "0");
+  const minute = String(value.getUTCMinutes()).padStart(2, "0");
+
+  return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
+}
+
+/** `01:30` → 90. Pipedrive returns an activity's duration as `HH:MM`. */
+function durationToMinutes(value: unknown): number {
+  const text = asString(value);
+  if (!text) return 0;
+
+  const [hours, minutes] = text.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+
+  return hours * 60 + minutes;
+}
+
+/**
+ * Minutes from the epoch for a stored `due_date`/`due_time` pair.
+ *
+ * Activities are stored in UTC — the same convention
+ * `buildMeetingActivityPayload` writes them in — so stored times are already on
+ * a common timeline and are compared directly.
+ */
+function storedTimeMinutes(date: string, time: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+
+  return Date.UTC(year, month - 1, day, hour, minute) / 60000;
+}
+
+/** A stored UTC `due_date`/`due_time` back to the Swedish wall time sellers read. */
+function storedTimeAsStockholm(date: string, time: string): { date: string; time: string } {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const parts = stockholmDateTimeParts(Date.UTC(year, month - 1, day, hour, minute));
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+
+  return {
+    date: `${pad(parts.year, 4)}-${pad(parts.month)}-${pad(parts.day)}`,
+    time: `${pad(parts.hour)}:${pad(parts.minute)}`
+  };
+}
+
+/**
+ * Existing activities whose time overlaps the proposed booking.
+ *
+ * The booking is converted to UTC first, exactly as
+ * `buildMeetingActivityPayload` does before creating an activity, so both sides
+ * of the comparison are in the form Pipedrive stores. Comparing the seller's
+ * raw wall-clock time against stored times would be wrong by the Stockholm
+ * offset and would miss every real clash.
+ *
+ * Two constraints of the activities endpoint are load-bearing here:
+ *  - `end_date` is exclusive, so a same-day range returns nothing. The query
+ *    spans the day after the meeting.
+ *  - It defaults to the token user's own activities, so `user_id=0` is required
+ *    to see bookings made by colleagues — the duplicates worth catching.
+ *
+ * Undated to-dos (no `due_time`) have no span and are skipped; treating them as
+ * midnight would warn on every booking that shares their date.
+ */
+export async function findMeetingOverlaps(data: {
+  date: string;
+  time: string;
+  durationMinutes: number;
+  personId?: CrmRecordId;
+  organizationId?: CrmRecordId;
+}): Promise<MeetingOverlap[]> {
+  const start = stockholmMeetingTimeAsUtc(data.date, data.time);
+  const startsAt = storedTimeMinutes(start.date, start.time);
+  const endsAt = startsAt + data.durationMinutes;
+
+  // A day either side covers a booking whose UTC date differs from its Swedish
+  // one and absorbs the exclusive `end_date`; the filter below does the real work.
+  const activities = await pipedriveRequest<AnyRecord[]>("/activities", {
+    query: {
+      user_id: 0,
+      start_date: shiftDate(start.date, -1),
+      end_date: shiftDate(start.date, 2),
+      limit: 100
+    }
+  });
+
+  return (activities ?? [])
+    .flatMap((activity) => {
+      const dueDate = asString(activity.due_date);
+      const dueTime = asString(activity.due_time);
+
+      // Undated to-dos and cancelled activities cannot clash with anything.
+      if (!dueDate || !dueTime || activity.active_flag === false) return [];
+
+      const otherStart = storedTimeMinutes(dueDate, dueTime);
+      // A zero-length activity still occupies its start minute, so treat it as
+      // one minute rather than letting it silently never overlap.
+      const otherEnd = otherStart + (durationToMinutes(activity.duration) || 1);
+
+      // Touching edges are not a clash: a meeting ending at 10:00 and the next
+      // starting at 10:00 is a back-to-back booking, which sellers do on purpose.
+      if (otherStart >= endsAt || otherEnd <= startsAt) return [];
+
+      // Reported in Swedish time so the warning matches the seller's calendar.
+      const localStart = storedTimeAsStockholm(dueDate, dueTime);
+      const storedEnd = utcDateTimeParts(otherEnd * 60000);
+      const localEnd = storedTimeAsStockholm(storedEnd.date, storedEnd.time);
+      const person = asRecord(activity.person_id);
+      const organization = asRecord(activity.org_id);
+      const personId = person ? asRecordId(person.id) : asRecordId(activity.person_id);
+      const organizationId = organization ? asRecordId(organization.id) : asRecordId(activity.org_id);
+
+      return [
+        {
+          id: asRecordId(activity.id),
+          subject: asString(activity.subject) ?? "Namnlös aktivitet",
+          date: localStart.date,
+          time: localStart.time,
+          endTime: localEnd.time,
+          personName: person ? asString(person.name) : undefined,
+          organizationName: organization ? asString(organization.name) : undefined,
+          sameContact:
+            (data.personId !== undefined && String(personId) === String(data.personId)) ||
+            (data.organizationId !== undefined && String(organizationId) === String(data.organizationId))
+        }
+      ];
+    })
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+}
+
+/** `YYYY-MM-DD` shifted by whole days, for building the query window. */
+function shiftDate(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+
+  return utcDateTimeParts(shifted.getTime()).date;
+}
+
 export function buildMeetingActivityPayload(
   data: MeetingStepInput,
   parties: ResolvedMeetingParties
 ): PipedriveActivityPayload {
+  const pipedriveTime = stockholmMeetingTimeAsUtc(data.date, data.time);
   const note = [
+    // The seller leads the note because it is the only place an activity can
+    // show them: they are options on a custom deal field rather than Pipedrive
+    // users, so `user_id` cannot name them and no custom activity field exists.
+    data.sellerName ? `Säljare: ${data.sellerName}` : "",
     data.agenda,
     data.technicianNotes ? `IT-tekniker: ${data.technicianNotes}` : "",
     data.internalComment ? `Internt: ${data.internalComment}` : ""
@@ -305,19 +614,24 @@ export function buildMeetingActivityPayload(
     .join("\n\n");
 
   return {
-    subject: `Möte: ${data.meetingType}`,
+    // A blank meeting type would read "Möte: " on the activity.
+    subject: data.meetingType ? `Möte: ${data.meetingType}` : "Möte",
     type: "meeting",
-    due_date: data.date,
-    due_time: data.time,
+    due_date: pipedriveTime.date,
+    due_time: pipedriveTime.time,
     duration: minutesToPipedriveDuration(data.durationMinutes),
     // Resolved IDs are passed in rather than read from `data`, so the payload
     // cannot be built with the undefined form IDs that previously left every
     // new contact's meeting orphaned.
     person_id: parties.personId,
     org_id: parties.organizationId,
-    user_id: data.sellerId,
-    location: data.locationOrLink,
-    note
+    // No `user_id`: the seller is a custom-field option, not a user account, so
+    // sending its id here was rejected as an unknown user. The activity is owned
+    // by the token's own user and names the seller in its note instead.
+    // Blank rather than absent would write an empty note and location onto the
+    // activity; agenda, technician notes and location are all optional now.
+    location: data.locationOrLink || undefined,
+    note: note || undefined
   };
 }
 
@@ -375,10 +689,15 @@ export async function resolveMeetingParties(data: MeetingStepInput): Promise<Res
   let createdOrganization = false;
 
   if (!organizationId && organizationName) {
-    const organization = await createOrganization({
-      name: organizationName,
-      address: data.organization?.address
-    });
+    const organization = await createOrganization(
+      buildOrganizationPayload({
+        name: organizationName,
+        address: data.organization?.address,
+        city: data.organization?.city,
+        website: data.organization?.website,
+        organizationNumber: data.organization?.organizationNumber
+      })
+    );
 
     organizationId = readId(organization);
     createdOrganization = true;
@@ -485,10 +804,15 @@ export async function resolveDealParties(data: DealStepInput): Promise<ResolvedD
   let createdOrganization = false;
 
   if (!organizationId) {
-    const organization = await createOrganization({
-      name: data.organization.name,
-      address: data.organization.address
-    });
+    const organization = await createOrganization(
+      buildOrganizationPayload({
+        name: data.organization.name,
+        address: data.organization.address,
+        city: data.organization.city,
+        website: data.organization.website,
+        organizationNumber: data.organization.organizationNumber
+      })
+    );
 
     organizationId = readId(organization);
     createdOrganization = true;
@@ -562,7 +886,9 @@ export async function buildDealPayload(
     title: data.deal.title,
     person_id: parties.personId,
     org_id: parties.organizationId,
-    user_id: data.sellerId,
+    // No `user_id`: the seller is an option on the "Affärens säljare" custom
+    // field below, not a Pipedrive user. Sending an option id here was rejected
+    // as an unknown user, and the four sellers have no account to own the deal.
     value: data.deal.value,
     currency: data.deal.currency ?? config.defaultCurrency,
     pipeline_id: pipelineId,
@@ -576,6 +902,7 @@ export async function buildDealPayload(
   assignCustomField(payload, customFields.viktigastForKunden, data.viktigastForKunden);
   assignCustomField(payload, customFields.fakturaStart, data.fakturaStart);
   assignCustomField(payload, customFields.fakturagrupp, data.fakturagrupp);
+  assignCustomField(payload, customFields.affarensSaljare, data.sellerId);
 
   return payload;
 }

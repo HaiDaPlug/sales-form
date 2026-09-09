@@ -79,15 +79,23 @@ export default async function HistoryPage({ searchParams }: PageProps) {
             <tbody>
               {entries.map((entry) => (
                 <tr key={entry.id} data-status={entry.status}>
-                  <td className="nowrap">{formatTimestamp(entry.createdAt)}</td>
-                  <td>{WORKFLOW_LABELS[entry.kind]}</td>
-                  <td>{entry.customerName ?? "—"}</td>
-                  <td>
-                    {entry.summary}
-                    {entry.errorMessage && <span className="history-error"> — {entry.errorMessage}</span>}
+                  <td className="nowrap" data-label="Tid">
+                    {formatTimestamp(entry.createdAt)}
                   </td>
-                  <td className="nowrap">{entry.createdBy}</td>
-                  <td className="nowrap">{describeResult(entry)}</td>
+                  <td data-label="Arbetsflöde">{WORKFLOW_LABELS[entry.kind]}</td>
+                  <td data-label="Kund">{entry.customerName ?? "—"}</td>
+                  <td data-label="Sammanfattning">
+                    <span>
+                      {entry.summary}
+                      {entry.errorMessage && <span className="history-error"> — {entry.errorMessage}</span>}
+                    </span>
+                  </td>
+                  <td className="nowrap" data-label="Av">
+                    {entry.createdBy}
+                  </td>
+                  <td className="nowrap" data-label="Resultat">
+                    {describeResult(entry)}
+                  </td>
                 </tr>
               ))}
             </tbody>

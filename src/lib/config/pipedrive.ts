@@ -15,9 +15,35 @@ export type PipedriveCustomFieldMappings = {
   fakturaStart?: string;
   fakturagrupp?: string;
   viktigastForKunden?: string;
+  /**
+   * "Affärens säljare" — an enum of the four sellers, verified against
+   * `GET /dealFields` (2026-08-26). The sellers are options on this field, not
+   * Pipedrive user accounts, so the deal's `user_id` cannot represent them.
+   */
+  affarensSaljare?: string;
 };
 
 export type PipedriveCustomFieldName = keyof PipedriveCustomFieldMappings;
+
+/**
+ * Custom *organization* fields, verified against `GET /organizationFields`
+ * (2026-08-17). The account stores both of these as custom fields rather than
+ * Pipedrive's built-ins:
+ *
+ *  - Org. Nummer holds organisationsnummer or personnummer. There is no native
+ *    Pipedrive field for it.
+ *  - Webbplats is a custom field even though a native `website` exists. Every
+ *    organization in the account uses the custom one and none uses the native
+ *    field, so writing to `website` would put the value where nobody looks.
+ *
+ * Unlike the deal fields these are optional: an unconfigured key skips that
+ * field rather than failing the request, so booking a meeting or creating a
+ * deal keeps working in an account that has not mapped them.
+ */
+export type PipedriveOrganizationFieldMappings = {
+  organizationNumber?: string;
+  website?: string;
+};
 
 export type PipedriveRuntimeConfig = {
   apiToken?: string;
@@ -27,6 +53,7 @@ export type PipedriveRuntimeConfig = {
   defaultStageId?: string;
   defaultCurrency: string;
   customFields: PipedriveCustomFieldMappings;
+  organizationFields: PipedriveOrganizationFieldMappings;
 };
 
 /**
@@ -37,7 +64,8 @@ export type PipedriveRuntimeConfig = {
 export const REQUIRED_CUSTOM_FIELDS: PipedriveCustomFieldName[] = [
   "fakturaStart",
   "fakturagrupp",
-  "viktigastForKunden"
+  "viktigastForKunden",
+  "affarensSaljare"
 ];
 
 /** `FOO=` in a .env file means "not configured", not "configured as empty". */
@@ -59,7 +87,12 @@ export function getPipedriveConfig(): PipedriveRuntimeConfig {
     customFields: {
       fakturaStart: readKey(process.env.PIPEDRIVE_FIELD_FAKTURA_START),
       fakturagrupp: readKey(process.env.PIPEDRIVE_FIELD_FAKTURAGRUPP),
-      viktigastForKunden: readKey(process.env.PIPEDRIVE_FIELD_VIKTIGAST_FOR_KUNDEN)
+      viktigastForKunden: readKey(process.env.PIPEDRIVE_FIELD_VIKTIGAST_FOR_KUNDEN),
+      affarensSaljare: readKey(process.env.PIPEDRIVE_FIELD_AFFARENS_SALJARE)
+    },
+    organizationFields: {
+      organizationNumber: readKey(process.env.PIPEDRIVE_FIELD_ORG_NUMBER),
+      website: readKey(process.env.PIPEDRIVE_FIELD_ORG_WEBSITE)
     }
   };
 }

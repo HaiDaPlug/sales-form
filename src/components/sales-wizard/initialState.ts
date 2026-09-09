@@ -22,6 +22,7 @@ export const initialMeeting: MeetingStepData = {
   technicianNotes: "",
   internalComment: "",
   sellerId: "",
+  sellerName: "",
   technicianId: "",
   technicianName: "",
   date: "",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TextField } from "@/components/sales-wizard/fields";
+import { FieldLabel, TextField } from "@/components/sales-wizard/fields";
 import type { SupplierSelection } from "@/lib/crm/types";
 
 /**
@@ -93,7 +93,7 @@ export function SupplierEditor({
         return (
           <div className="grid" key={index}>
             <div className="field">
-              <label>Leverantör</label>
+              <FieldLabel label="Leverantör" required />
               <select
                 value={isOther ? OTHER_SUPPLIER : supplier.name}
                 onChange={(event) => {
@@ -119,6 +119,7 @@ export function SupplierEditor({
 
             {isOther && (
               <TextField
+                required
                 label="Företagsnamn"
                 value={supplier.name}
                 onChange={(name) => updateSupplier(index, { name })}
@@ -127,8 +128,9 @@ export function SupplierEditor({
 
             <TextField label="Kundnummer" value={supplier.customerNumber} onChange={(customerNumber) => updateSupplier(index, { customerNumber })} />
             <TextField
+              required
               className="full"
-              label="Uppsägningsadress (krävs)"
+              label="Uppsägningsadress"
               value={supplier.noticeAddress}
               onChange={(noticeAddress) => updateSupplier(index, { noticeAddress })}
             />

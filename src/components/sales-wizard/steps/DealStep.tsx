@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { CheckLabel, FormSection, ReferenceSelect, SelectField, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import { DateField } from "@/components/sales-wizard/DateField";
 import { LookupBox } from "@/components/sales-wizard/LookupBox";
 import type { DealStepData } from "@/lib/crm/types";
 
@@ -58,8 +59,8 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
       </p>
 
       <FormSection title="Kontakt och organisation">
-        <TextField label="Kontaktperson" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
-        <TextField label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
+        <TextField required label="Kontaktperson" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
+        <TextField required label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <SelectField
           label="Typ av telefonnummer"
           value={data.person.phoneType ?? "work"}
@@ -72,7 +73,7 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
             onChange({ ...data, person: { ...data.person, phoneType: phoneType as DealStepData["person"]["phoneType"] } })
           }
         />
-        <TextField label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
+        <TextField required label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
         <SelectField
           label="Typ av e-postadress"
           value={data.person.emailType ?? "work"}
@@ -86,11 +87,13 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
           }
         />
         <TextField
+          required
           label={isIndividual ? "Kundnamn" : "Organisation"}
           value={data.organization.name}
           onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
         />
         <TextField
+          required
           label="Webbplats"
           value={data.organization.website}
           onChange={(website) => onChange({ ...data, organization: { ...data.organization, website } })}
@@ -108,11 +111,13 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
           />
         </div>
         <TextField
+          required
           label={isIndividual ? "Personnummer" : "Organisationsnummer"}
           value={data.organization.organizationNumber}
           onChange={(organizationNumber) => onChange({ ...data, organization: { ...data.organization, organizationNumber } })}
         />
         <TextField
+          required
           className="full"
           label="Adress"
           value={data.organization.address}
@@ -121,7 +126,7 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
       </FormSection>
 
       <FormSection title="Affär">
-        <TextField label="Affärstitel" value={data.deal.title} onChange={(title) => onChange({ ...data, deal: { ...data.deal, title } })} />
+        <TextField required label="Affärstitel" value={data.deal.title} onChange={(title) => onChange({ ...data, deal: { ...data.deal, title } })} />
         <TextField label="Värde" type="number" value={String(data.deal.value ?? 0)} onChange={(value) => onChange({ ...data, deal: { ...data.deal, value: Number(value) } })} />
         <SelectField
           label="Valuta"
@@ -130,6 +135,7 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
           onChange={(currency) => onChange({ ...data, deal: { ...data.deal, currency: currency as DealStepData["deal"]["currency"] } })}
         />
         <ReferenceSelect
+          required
           label="Pipeline"
           value={data.deal.pipelineId}
           options={reference.pipelines}
@@ -152,18 +158,19 @@ export function DealStep({ data, onChange, reference }: StepProps<DealStepData>)
           onChange={(stageId) => onChange({ ...data, deal: { ...data.deal, stageId } })}
         />
         <ReferenceSelect
+          required
           label="Säljare"
           value={data.sellerId}
-          options={reference.users}
+          options={reference.sellers}
           loading={reference.loading}
           error={reference.error}
           onChange={(sellerId) => onChange({ ...data, sellerId })}
         />
-        <TextArea className="full" label="Viktigast för kunden" value={data.viktigastForKunden} onChange={(viktigastForKunden) => onChange({ ...data, viktigastForKunden })} />
-        <TextField label="Faktura start" type="date" value={data.fakturaStart} onChange={(fakturaStart) => onChange({ ...data, fakturaStart })} />
-        <TextField label="Fakturagrupp" value={data.fakturagrupp} onChange={(fakturagrupp) => onChange({ ...data, fakturagrupp })} />
+        <TextArea required className="full" label="Viktigast för kunden" value={data.viktigastForKunden} onChange={(viktigastForKunden) => onChange({ ...data, viktigastForKunden })} />
+        <DateField required label="Faktura start" value={data.fakturaStart} onChange={(fakturaStart) => onChange({ ...data, fakturaStart })} />
+        <TextField required label="Fakturagrupp" value={data.fakturagrupp} onChange={(fakturagrupp) => onChange({ ...data, fakturagrupp })} />
         <TextField label="Avtalslängd månader" type="number" value={String(data.contractLengthMonths ?? "")} onChange={(contractLengthMonths) => onChange({ ...data, contractLengthMonths: Number(contractLengthMonths) })} />
-        <TextField label="Avtalsstart" type="date" value={data.contractStartDate} onChange={(contractStartDate) => onChange({ ...data, contractStartDate })} />
+        <DateField label="Avtalsstart" value={data.contractStartDate} onChange={(contractStartDate) => onChange({ ...data, contractStartDate })} />
         <TextField label="Månadskostnad" type="number" value={String(data.monthlyCost ?? 0)} onChange={(monthlyCost) => onChange({ ...data, monthlyCost: Number(monthlyCost) })} />
         <TextField label="Startavgift" type="number" value={String(data.startFee ?? 0)} onChange={(startFee) => onChange({ ...data, startFee: Number(startFee) })} />
         <TextField label="Totalt affärsvärde" type="number" value={String(data.totalDealValue ?? 0)} onChange={(totalDealValue) => onChange({ ...data, totalDealValue: Number(totalDealValue) })} />

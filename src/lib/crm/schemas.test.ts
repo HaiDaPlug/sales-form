@@ -93,6 +93,24 @@ describe("meetingStepSchema (S01, S04)", () => {
     expect(result.success).toBe(true);
   });
 
+  it.each([
+    ["blank, as the wizard sends them", { agenda: "", technicianNotes: "", locationOrLink: "" }],
+    ["omitted entirely", { agenda: undefined, technicianNotes: undefined, locationOrLink: undefined }]
+  ])("books a meeting with agenda, technician notes and location %s", (_label, fields) => {
+    // None of the three reach anything that needs them: the first two are only
+    // folded into the activity note, the third into an optional activity field.
+    const result = meetingStepSchema.safeParse(meeting(fields));
+
+    expect(result.success).toBe(true);
+  });
+
+  it("books a meeting with no meeting type", () => {
+    // It only names the activity, and the payload falls back to a plain "Möte".
+    const result = meetingStepSchema.safeParse(meeting({ meetingType: "" }));
+
+    expect(result.success).toBe(true);
+  });
+
   it("accepts the blank organization the wizard always sends (S01)", () => {
     const result = meetingStepSchema.safeParse(meeting({ organization: BLANK_WIZARD_ORGANIZATION }));
 

@@ -4,19 +4,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The Pipedrive service is mocked wholesale: these tests are about routing
  * decisions (which record a document lands on), not about HTTP.
  */
-vi.mock("@/lib/pipedrive/service", () => ({
+vi.mock("@/lib/pipedrive/service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pipedrive/service")>()),
   assertDealBelongsToOrganization: vi.fn(),
   createNote: vi.fn(),
   createOrganization: vi.fn(),
-  uploadFile: vi.fn(),
-  // Imported by the module under test only for its error type.
-  DealOwnershipError: class DealOwnershipError extends Error {
-    readonly status = 422;
-  }
+  uploadFile: vi.fn()
+  // `buildOrganizationPayload` and `DealOwnershipError` come from the real
+  // module: the first is a pure function whose output these tests assert on,
+  // the second is only needed as an error type.
 }));
 
 const service = await import("@/lib/pipedrive/service");
 const { attachDocument, resolveAttachmentTarget } = await import("@/lib/pipedrive/attachment");
+const { resetEnvCache } = await import("@/lib/config/env");
 
 const document = {
   fileName: "mediacleaning-andersson-ab-2026-08-14.txt",
@@ -65,7 +66,7 @@ describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
 
   it("creates an organization when asked and none exists (S17)", async () => {
     const result = await resolveAttachmentTarget({
-      createOrganizationFrom: { name: "Andersson AB", address: "Storgatan 1, Stockholm" }
+      createOrganizationFrom: { name: "Andersson AB", address: "Storgatan 1", city: "Stockholm" }
     });
 
     expect(service.createOrganization).toHaveBeenCalledWith({
@@ -74,6 +75,31 @@ describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
     });
     expect(result.target).toMatchObject({ kind: "organization", organizationId: 500 });
     expect(result.createdOrganizationId).toBe(500);
+  });
+
+  it("stores the identity number of a customer registered from Mediacleaning (S17)", async () => {
+    process.env.PIPEDRIVE_FIELD_ORG_NUMBER = "orgnr_field_key";
+    resetEnvCache();
+
+    try {
+      await resolveAttachmentTarget({
+        createOrganizationFrom: {
+          name: "Andersson AB",
+          address: "Storgatan 1",
+          city: "Stockholm",
+          organizationNumber: "556677-8899"
+        }
+      });
+
+      // A customer registered here must carry the same identity as one created
+      // from the deal step, or the two records cannot be matched later.
+      expect(service.createOrganization).toHaveBeenCalledWith(
+        expect.objectContaining({ orgnr_field_key: "556677-8899" })
+      );
+    } finally {
+      delete process.env.PIPEDRIVE_FIELD_ORG_NUMBER;
+      resetEnvCache();
+    }
   });
 
   it("does not create an organization when one is already selected", async () => {

@@ -22,7 +22,14 @@ export async function POST(request: NextRequest) {
       dealId: parsed.dealId,
       organizationId: parsed.organizationId,
       createOrganizationFrom: parsed.createOrganization
-        ? { name: parsed.companyName, address: [parsed.address, parsed.city].filter(Boolean).join(", ") }
+        ? {
+            name: parsed.companyName,
+            address: parsed.address,
+            city: parsed.city,
+            // Mandatory in this step, so a customer registered here carries the
+            // same identity as one created from the deal step.
+            organizationNumber: parsed.organizationNumber
+          }
         : undefined,
       document: pdf,
       noteContent: buildMediacleaningNote(parsed, pdf.fileName)

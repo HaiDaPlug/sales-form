@@ -12,6 +12,7 @@ import {
   createOrganization,
   createPerson,
   DealOwnershipError,
+  findMeetingOverlaps,
   ExistingRecordProtectionError,
   PartialResolutionError,
   getCustomFieldMappings,
@@ -19,6 +20,7 @@ import {
   getOrganizationFields,
   getPersonFields,
   getPipelines,
+  getSellers,
   getStages,
   getUsers,
   MIN_SEARCH_TERM_LENGTH,
@@ -73,6 +75,23 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     if (operation === "users") return jsonOk(await getUsers());
+    if (operation === "sellers") return jsonOk(await getSellers());
+
+    if (operation === "activities/overlaps") {
+      const durationMinutes = Number(searchParams.get("durationMinutes"));
+
+      return jsonOk(
+        await findMeetingOverlaps({
+          date: requiredQuery(searchParams, "date"),
+          time: requiredQuery(searchParams, "time"),
+          // A missing or unparseable duration would make every booking
+          // zero-length and silently match nothing.
+          durationMinutes: Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes : 60,
+          personId: searchParams.get("personId") ?? undefined,
+          organizationId: searchParams.get("organizationId") ?? undefined
+        })
+      );
+    }
     if (operation === "pipelines") return jsonOk(await getPipelines());
     if (operation === "stages") return jsonOk(await getStages(searchParams.get("pipelineId") ?? undefined));
     if (operation === "custom-field-mappings") return jsonOk(getCustomFieldMappings());
