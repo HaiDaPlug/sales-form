@@ -562,6 +562,44 @@ textarea:disabled {
 }
 
 /* =============================================================================
+   Chosen suppliers
+
+   One card per supplier on the cancellation, showing the details the letter
+   will carry. They come from the shared registry, so only the free-text
+   comment is editable here.
+   ========================================================================== */
+
+.supplier-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+}
+
+.supplier-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.supplier-name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.supplier-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* =============================================================================
    Meeting slots
 
    The bookable times for a date, as a wrapping grid of buttons. Only times the

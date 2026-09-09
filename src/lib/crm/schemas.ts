@@ -224,20 +224,22 @@ export const prospectStepSchema = z.object({
 /**
  * A supplier to send a cancellation to.
  *
- * `isOther` marks a supplier typed in by hand because it is not in the standard
- * list. Those carry no known notice address, so name and address both become
- * required — a cancellation letter with no recipient address cannot be sent.
- * Email stays optional: the document is a PDF, and the address is what it is
- * posted to.
+ * Picked from the shared registry, which carries the notice address and — where
+ * the client has supplied it — the supplier's own organisationsnummer, both of
+ * which the letter names. A cancellation with no recipient address cannot be
+ * posted, so that stays required.
+ *
+ * No customer number: the customer is identified by their own
+ * organisationsnummer, which the letter already carries.
  */
 export const supplierSchema = z.object({
   id: optionalText,
   name: requiredText("Leverantör"),
-  customerNumber: optionalText,
+  /** The supplier's own identity number; blank while the client still owes it. */
+  organizationNumber: optionalText,
   noticeAddress: requiredText("Uppsägningsadress"),
   email: z.string().trim().email("Ange en giltig e-post").optional().or(z.literal("")),
-  comment: optionalText,
-  isOther: z.boolean().optional()
+  comment: optionalText
 });
 
 export const mediacleaningStepSchema = z
@@ -250,7 +252,16 @@ export const mediacleaningStepSchema = z
     suppliers: z.array(supplierSchema).default([]),
     internalComment: optionalText,
     organizationId: recordId.optional(),
+    /** A prospect the document and its note belong to, when the sale is new. */
+    leadId: optionalText,
+    /** An existing deal, for a customer who already has one. Never created here. */
     dealId: recordId.optional(),
+    /**
+     * The contact chosen from the organization's people, named as firmatecknare
+     * in the document. Required, so a cancellation is never signed by nobody.
+     */
+    signerPersonId: recordId.optional(),
+    signerName: requiredText("Firmatecknare"),
     /**
      * Seller asked to register this customer as a new organization because no
      * matching record was found (S17). Ignored when an organization is already
@@ -264,6 +275,17 @@ export const mediacleaningStepSchema = z
         code: z.ZodIssueCode.custom,
         path: ["suppliers"],
         message: "Välj minst en leverantör när uppsägningsdokument ska skapas"
+      });
+    }
+
+    // Every document belongs to a customer record in Pipedrive: the file is
+    // uploaded to the organization and the note to the prospect or deal, so a
+    // document with no CRM target has nowhere to go.
+    if (!value.organizationId && !value.createOrganization) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["organizationId"],
+        message: "Koppla en organisation, eller välj att registrera kunden som ny organisation"
       });
     }
   });

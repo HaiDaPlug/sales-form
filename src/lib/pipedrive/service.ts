@@ -107,6 +107,72 @@ export async function createOrganization(payload: PipedriveOrganizationPayload) 
   });
 }
 
+/** The customer details a document is filled in from, read back from Pipedrive. */
+export type OrganizationProfile = {
+  id: CrmRecordId;
+  name: string;
+  organizationNumber?: string;
+  website?: string;
+  address?: string;
+  city?: string;
+};
+
+/**
+ * One organization, in the shape the document steps fill their fields from.
+ *
+ * `address_locality` is Pipedrive's own parse of the address string and is
+ * where the city ends up, since the account has no separate city field: the
+ * portal writes "Storgatan 1, Stockholm" and reads the two back apart.
+ */
+export async function getOrganizationProfile(organizationId: CrmRecordId): Promise<OrganizationProfile> {
+  const organization = await pipedriveRequest<AnyRecord>(`/organizations/${organizationId}`);
+  const fields = getPipedriveConfig().organizationFields;
+  const city = asString(organization?.address_locality);
+  const fullAddress = asString(organization?.address);
+
+  return {
+    id: asRecordId(organization?.id) || organizationId,
+    name: asString(organization?.name) ?? "Namnlös organisation",
+    organizationNumber: fields.organizationNumber ? asString(organization?.[fields.organizationNumber]) : undefined,
+    website: fields.website ? asString(organization?.[fields.website]) : undefined,
+    // The city is dropped from the street address it was folded into, so the
+    // two fields do not both show it.
+    address: stripTrailingCity(fullAddress, city),
+    city
+  };
+}
+
+function stripTrailingCity(address: string | undefined, city: string | undefined): string | undefined {
+  if (!address || !city) return address;
+
+  const withoutCity = address.replace(new RegExp(`,?\\s*${escapeRegExp(city)}\\s*$`, "i"), "").trim();
+
+  return withoutCity || address;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The people attached to an organization, to choose a signatory from. */
+export async function getOrganizationPersons(organizationId: CrmRecordId): Promise<SearchHit[]> {
+  const persons = await pipedriveRequest<AnyRecord[]>(`/organizations/${organizationId}/persons`);
+
+  return (persons ?? []).map((person) => {
+    const email = firstString(person.email);
+    const phone = firstString(person.phone);
+
+    return {
+      id: asRecordId(person.id),
+      name: asString(person.name) ?? "Namnlös person",
+      detail: [email, phone].filter(Boolean).join(" · ") || undefined,
+      email,
+      phone,
+      organizationId
+    };
+  });
+}
+
 /** The customer details an organization is created from, in any workflow. */
 export type OrganizationDetails = {
   name: string;

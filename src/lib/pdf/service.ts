@@ -48,14 +48,20 @@ export async function generateMediacleaningPdf(
 
       writer.heading("Mottagare");
       writer.keyValue("Företag", supplier.name);
+      // Blank for most of the shipped list until the client supplies the
+      // numbers; `keyValue` omits an empty value rather than printing a label
+      // with nothing after it.
+      writer.keyValue("Organisationsnummer", supplier.organizationNumber);
       writer.keyValue("Adress", supplier.noticeAddress);
       if (supplier.email) writer.keyValue("E-post", supplier.email);
-      if (supplier.customerNumber) writer.keyValue("Kundnummer", supplier.customerNumber);
 
       writer.heading("Kund");
       writer.keyValue("Namn/företagsnamn", data.companyName);
+      // The customer's identity number is what the supplier matches the
+      // cancellation to; there is no customer number any more.
       writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
       writer.keyValue("Adress", `${data.address}, ${data.city}`);
+      writer.keyValue("Firmatecknare", data.signerName);
 
       writer.heading("Uppsägning");
       template.cancellation.paragraphs(data, supplier).forEach((paragraph) => writer.paragraph(paragraph));
@@ -64,7 +70,7 @@ export async function generateMediacleaningPdf(
         writer.paragraph(supplier.comment);
       }
 
-      writer.signature(template.cancellation.signatureLabel, data.companyName);
+      writer.signature(template.cancellation.signatureLabel, data.signerName);
     });
   }
 
@@ -75,15 +81,14 @@ export async function generateMediacleaningPdf(
     writer.keyValue("Namn/företagsnamn", data.companyName);
     writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
     writer.keyValue("Adress", `${data.address}, ${data.city}`);
+    writer.keyValue("Firmatecknare", data.signerName);
 
     writer.heading(template.agreementSummary.supplierHeading);
     if (data.suppliers.length === 0) {
       writer.paragraph(template.agreementSummary.noSuppliersText);
     } else {
       data.suppliers.forEach((supplier) => {
-        const details = [supplier.customerNumber ? `kundnummer ${supplier.customerNumber}` : "", supplier.noticeAddress]
-          .filter(Boolean)
-          .join(" - ");
+        const details = [supplier.organizationNumber, supplier.noticeAddress].filter(Boolean).join(" - ");
         writer.bullet(details ? `${supplier.name} - ${details}` : supplier.name);
       });
     }
@@ -176,6 +181,7 @@ export function buildMediacleaningNote(data: MediacleaningStepInput, fileName: s
     "Mediacleaning genomförd",
     `Datum: ${today()}`,
     `Kund: ${data.companyName} (${data.organizationNumber})`,
+    `Firmatecknare: ${data.signerName}`,
     `Dokument: ${data.documentTypes.map(documentTypeLabel).join(", ")}`,
     `Leverantörer: ${suppliers.length > 0 ? suppliers.join(", ") : "-"}`,
     `Fil: ${fileName}`,

@@ -45,8 +45,10 @@ const mediacleaningBody = {
   organizationNumber: "556677-8899",
   address: "Storgatan 1",
   city: "Stockholm",
+  signerName: "Anna Andersson",
   documentTypes: ["cancellation"],
   suppliers: [{ name: "Eniro Group AB", noticeAddress: "Box 100, 111 11 Stockholm" }],
+  organizationId: 7,
   dealId: 42
 };
 
@@ -68,7 +70,7 @@ beforeEach(() => {
   vi.mocked(recordHistorySafely).mockReset().mockResolvedValue(undefined);
   vi.mocked(attachDocument)
     .mockReset()
-    .mockResolvedValue({ target: { kind: "deal", dealId: 42 }, fileId: 800, noteId: 900 });
+    .mockResolvedValue({ organizationId: 7, noteTarget: { kind: "lead", leadId: "lead-1" }, fileId: 800, noteId: 900 });
 });
 
 describe.each([
@@ -104,7 +106,6 @@ describe.each([
 
   it("still returns the document when the attachment failed", async () => {
     vi.mocked(attachDocument).mockResolvedValue({
-      target: { kind: "none" },
       warning: "Kunde inte kopplas i Pipedrive."
     });
 
@@ -116,7 +117,6 @@ describe.each([
 
   it("records a failed attachment as a warning, not an error", async () => {
     vi.mocked(attachDocument).mockResolvedValue({
-      target: { kind: "none" },
       warning: "Kunde inte kopplas i Pipedrive."
     });
 

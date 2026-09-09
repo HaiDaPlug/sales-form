@@ -15,10 +15,11 @@ export async function POST(request: NextRequest) {
     const parsed = mediacleaningStepSchema.parse(await request.json());
     const pdf = await generateMediacleaningPdf(parsed);
 
-    // Attached to the deal when one is selected, otherwise to the organization.
     // Never throws: the document exists by now and the seller must receive it
     // even if Pipedrive is unreachable.
+    // The file goes to the organization; the note follows the sale.
     const attachment = await attachDocument({
+      leadId: parsed.leadId,
       dealId: parsed.dealId,
       organizationId: parsed.organizationId,
       createOrganizationFrom: parsed.createOrganization
@@ -63,8 +64,9 @@ export async function POST(request: NextRequest) {
       customerName: parsed.companyName,
       summary: `${parsed.documentTypes.join(", ")} för ${parsed.companyName} (${parsed.suppliers.length} leverantörer)`,
       fileName: pdf.fileName,
+      pipedriveLeadId: parsed.leadId,
       pipedriveDealId: parsed.dealId,
-      pipedriveOrganizationId: attachment.createdOrganizationId ?? parsed.organizationId,
+      pipedriveOrganizationId: attachment.organizationId ?? parsed.organizationId,
       errorMessage: attachment.warning,
       payload: parsed
     });

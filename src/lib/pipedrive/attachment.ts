@@ -13,29 +13,33 @@ import type { GeneratedDocument } from "@/lib/pdf/service";
 /**
  * Where a generated document and its note belong in Pipedrive.
  *
- * The rule across every document scenario: attach to the deal when there is
- * one, otherwise to the organization. A document that reaches neither is still
- * delivered to the seller as a download — losing the file because the CRM was
- * unreachable would be worse than losing the CRM link.
+ * The file always goes to the **organization**: the client sends contracts and
+ * cancellations as Smart Docs from the customer's own page, so that is where
+ * the document has to be findable. The note goes to the record the work belongs
+ * to — the prospect, an existing deal, or failing both the organization — so
+ * the internal comment sits with the sale rather than the company.
  */
-export type AttachmentTarget =
-  | { kind: "deal"; dealId: CrmRecordId; organizationId?: CrmRecordId }
-  | { kind: "organization"; organizationId: CrmRecordId }
-  | { kind: "none" };
+export type NoteTarget =
+  | { kind: "lead"; leadId: string }
+  | { kind: "deal"; dealId: CrmRecordId }
+  | { kind: "organization"; organizationId: CrmRecordId };
 
 export type AttachmentInput = {
+  leadId?: string;
   dealId?: CrmRecordId;
   organizationId?: CrmRecordId;
   /**
    * Customer details used when an organization has to be created first (S17).
    * Carries the identity number and city so a customer registered from
-   * Mediacleaning is stored as completely as one created from the deal step.
+   * Mediacleaning is stored as completely as one created from the prospect step.
    */
   createOrganizationFrom?: OrganizationDetails;
 };
 
 export type AttachmentResult = {
-  target: AttachmentTarget;
+  /** The organization the file was uploaded to, once one is known. */
+  organizationId?: CrmRecordId;
+  noteTarget?: NoteTarget;
   /** Set when this call created the organization rather than reusing one. */
   createdOrganizationId?: CrmRecordId;
   fileId?: CrmRecordId;
@@ -45,29 +49,23 @@ export type AttachmentResult = {
 };
 
 /**
- * Resolves the attachment target, creating the organization if the seller asked
- * for one and none exists yet.
+ * Resolves the organization the document is filed under, creating it when the
+ * seller asked for one and none exists yet.
  *
- * When both a deal and an organization are given, the deal wins — but only
- * after confirming it actually belongs to that organization, so a document
- * cannot land on another customer's deal.
+ * A deal given alongside it is verified to belong to that organization before
+ * anything is written, so a note cannot land on another customer's sale.
  */
 export async function resolveAttachmentTarget(input: AttachmentInput): Promise<{
-  target: AttachmentTarget;
+  organizationId?: CrmRecordId;
+  noteTarget?: NoteTarget;
   createdOrganizationId?: CrmRecordId;
 }> {
   let organizationId = blankToUndefined(input.organizationId);
+  const dealId = blankToUndefined(input.dealId);
+  const leadId = typeof input.leadId === "string" && input.leadId.trim() !== "" ? input.leadId : undefined;
 
-  if (input.dealId) {
-    const dealId = blankToUndefined(input.dealId);
-
-    if (dealId) {
-      if (organizationId) {
-        await assertDealBelongsToOrganization(dealId, organizationId);
-      }
-
-      return { target: { kind: "deal", dealId, organizationId } };
-    }
+  if (dealId && organizationId) {
+    await assertDealBelongsToOrganization(dealId, organizationId);
   }
 
   let createdOrganizationId: CrmRecordId | undefined;
@@ -86,15 +84,20 @@ export async function resolveAttachmentTarget(input: AttachmentInput): Promise<{
     createdOrganizationId = id;
   }
 
-  if (organizationId) {
-    return { target: { kind: "organization", organizationId }, createdOrganizationId };
-  }
+  // The prospect first: a new sale's internal comment belongs with the sale.
+  const noteTarget: NoteTarget | undefined = leadId
+    ? { kind: "lead", leadId }
+    : dealId
+      ? { kind: "deal", dealId }
+      : organizationId
+        ? { kind: "organization", organizationId }
+        : undefined;
 
-  return { target: { kind: "none" }, createdOrganizationId };
+  return { organizationId, noteTarget, createdOrganizationId };
 }
 
 /**
- * Uploads the document and writes its note.
+ * Uploads the document to the organization and writes its note.
  *
  * Attachment failures are returned as a `warning` rather than thrown: the
  * document has already been generated at this point, and the seller must still
@@ -103,29 +106,26 @@ export async function resolveAttachmentTarget(input: AttachmentInput): Promise<{
 export async function attachDocument(
   input: AttachmentInput & { document: GeneratedDocument; noteContent: string }
 ): Promise<AttachmentResult> {
-  let target: AttachmentTarget = { kind: "none" };
+  let organizationId: CrmRecordId | undefined;
+  let noteTarget: NoteTarget | undefined;
   let createdOrganizationId: CrmRecordId | undefined;
 
   try {
     const resolved = await resolveAttachmentTarget(input);
-    target = resolved.target;
+    organizationId = resolved.organizationId;
+    noteTarget = resolved.noteTarget;
     createdOrganizationId = resolved.createdOrganizationId;
   } catch (error) {
-    return { target, warning: describeFailure(error) };
+    return { warning: describeFailure(error) };
   }
 
-  if (target.kind === "none") {
+  if (!organizationId) {
     return {
-      target,
+      noteTarget,
       createdOrganizationId,
-      warning: "Dokumentet kopplades inte i Pipedrive — ingen affär eller organisation var vald."
+      warning: "Dokumentet kopplades inte i Pipedrive — ingen organisation var vald."
     };
   }
-
-  const link =
-    target.kind === "deal"
-      ? { dealId: target.dealId }
-      : { organizationId: target.organizationId };
 
   // Upload and note are two calls and cannot be made atomic. They are reported
   // separately so the outcome is diagnosable — "file uploaded, note failed" is
@@ -141,23 +141,28 @@ export async function attachDocument(
       await uploadFile({
         file: input.document.blob,
         fileName: input.document.fileName,
-        ...link
+        organizationId
       })
     );
   } catch (error) {
-    return { target, createdOrganizationId, warning: describeFailure(error) };
+    return { organizationId, noteTarget, createdOrganizationId, warning: describeFailure(error) };
+  }
+
+  if (!noteTarget) {
+    return { organizationId, createdOrganizationId, fileId };
   }
 
   try {
     const note = await createNote({
       content: input.noteContent,
-      ...(target.kind === "deal" ? { deal_id: target.dealId } : { org_id: target.organizationId })
+      ...noteLink(noteTarget)
     });
 
-    return { target, createdOrganizationId, fileId, noteId: readId(note) };
+    return { organizationId, noteTarget, createdOrganizationId, fileId, noteId: readId(note) };
   } catch (error) {
     return {
-      target,
+      organizationId,
+      noteTarget,
       createdOrganizationId,
       fileId,
       warning: `Dokumentet laddades upp i Pipedrive men anteckningen kunde inte skapas: ${
@@ -165,6 +170,13 @@ export async function attachDocument(
       }`
     };
   }
+}
+
+function noteLink(target: NoteTarget) {
+  if (target.kind === "lead") return { lead_id: target.leadId };
+  if (target.kind === "deal") return { deal_id: target.dealId };
+
+  return { org_id: target.organizationId };
 }
 
 /**
@@ -175,12 +187,16 @@ export async function attachDocument(
  * message may contain.
  */
 export function attachmentHeaders(result: AttachmentResult): Record<string, string> {
-  const headers: Record<string, string> = { "X-Attachment-Target": result.target.kind };
+  const headers: Record<string, string> = {
+    "X-Attachment-Target": result.organizationId !== undefined ? "organization" : "none"
+  };
 
-  if (result.target.kind === "deal") {
-    headers["X-Attachment-Deal-Id"] = String(result.target.dealId);
-  } else if (result.target.kind === "organization") {
-    headers["X-Attachment-Organization-Id"] = String(result.target.organizationId);
+  if (result.organizationId !== undefined) {
+    headers["X-Attachment-Organization-Id"] = String(result.organizationId);
+  }
+
+  if (result.noteTarget) {
+    headers["X-Attachment-Note-Target"] = result.noteTarget.kind;
   }
 
   if (result.createdOrganizationId !== undefined) {

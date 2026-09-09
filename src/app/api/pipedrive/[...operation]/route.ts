@@ -21,6 +21,8 @@ import {
   getCustomFieldMappings,
   getDealFields,
   getOrganizationFields,
+  getOrganizationPersons,
+  getOrganizationProfile,
   getPersonFields,
   getSellers,
   getUsers,
@@ -89,6 +91,18 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     if (operation === "leads/search") {
       return jsonOk(await searchLeads(requiredSearchTerm(searchParams), searchParams.get("organizationId") ?? undefined));
+    }
+
+    if (operation.startsWith("organizations/")) {
+      const [, organizationId, detail] = operation.split("/");
+
+      if (organizationId && detail === "persons") {
+        return jsonOk(await getOrganizationPersons(organizationId));
+      }
+
+      if (organizationId && detail === undefined) {
+        return jsonOk(await getOrganizationProfile(organizationId));
+      }
     }
 
     if (operation === "users") return jsonOk(await getUsers());

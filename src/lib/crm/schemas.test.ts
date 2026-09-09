@@ -51,8 +51,10 @@ function mediacleaning(overrides: Record<string, unknown> = {}) {
     organizationNumber: "556677-8899",
     address: "Storgatan 1",
     city: "Stockholm",
+    signerName: "Anna Andersson",
     documentTypes: ["cancellation"],
     suppliers: [supplier()],
+    organizationId: 7,
     ...overrides
   };
 }
@@ -321,48 +323,34 @@ describe("mediacleaningStepSchema (S19, S20)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("requires an address for a manually entered supplier", () => {
+  it("requires a name for every supplier", () => {
     const result = mediacleaningStepSchema.safeParse(
-      mediacleaning({ suppliers: [{ name: "Lokaltidningen", isOther: true }] })
+      mediacleaning({ suppliers: [{ name: "", noticeAddress: "Box 1" }] })
     );
 
     expect(result.success).toBe(false);
   });
 
-  it("requires a name for a manually entered supplier", () => {
-    const result = mediacleaningStepSchema.safeParse(
-      mediacleaning({ suppliers: [{ name: "", isOther: true, noticeAddress: "Box 1" }] })
-    );
+  it("requires a notice address for every supplier — that is where the letter goes", () => {
+    const result = mediacleaningStepSchema.safeParse(mediacleaning({ suppliers: [{ name: "Eniro" }] }));
 
     expect(result.success).toBe(false);
   });
 
-  it("accepts a manually entered supplier with name and address", () => {
+  it("accepts a supplier whose identity number the client has not supplied yet", () => {
     const result = mediacleaningStepSchema.safeParse(
-      mediacleaning({
-        suppliers: [supplier({ name: "Lokaltidningen", isOther: true, noticeAddress: "Box 1, 111 11 Stockholm" })]
-      })
+      mediacleaning({ suppliers: [supplier({ organizationNumber: "" })] })
     );
 
     expect(result.success).toBe(true);
   });
 
-  it("does not require an email for a manually entered supplier", () => {
+  it("keeps the supplier's own identity number for the letter", () => {
     const result = mediacleaningStepSchema.safeParse(
-      mediacleaning({
-        suppliers: [supplier({ name: "Lokaltidningen", isOther: true, email: "" })]
-      })
+      mediacleaning({ suppliers: [supplier({ organizationNumber: "556059-9282" })] })
     );
 
-    expect(result.success).toBe(true);
-  });
-
-  it("requires a notice address for every supplier, not only manual ones", () => {
-    const result = mediacleaningStepSchema.safeParse(
-      mediacleaning({ suppliers: [{ name: "Eniro" }] })
-    );
-
-    expect(result.success).toBe(false);
+    expect(result.success && result.data.suppliers[0].organizationNumber).toBe("556059-9282");
   });
 
   it("accepts a personnummer for a private individual", () => {
@@ -372,8 +360,27 @@ describe("mediacleaningStepSchema (S19, S20)", () => {
     expect(result.success && result.data.organizationNumber).toBe("850101-1234");
   });
 
-  it("does not require any deal or organization link", () => {
-    // S16/S17: mediacleaning must work without a deal.
+  it("requires a firmatecknare, so no cancellation is signed by nobody", () => {
+    const result = mediacleaningStepSchema.safeParse(mediacleaning({ signerName: "" }));
+
+    expect(result.success).toBe(false);
+  });
+
+  /**
+   * The document is filed under the customer's organization in Pipedrive, so
+   * one has to exist. A customer with no record yet is registered here; a
+   * document with neither has nowhere to go.
+   */
+  it("requires a customer record, or permission to create one", () => {
+    expect(mediacleaningStepSchema.safeParse(mediacleaning({ organizationId: undefined })).success).toBe(false);
+
+    expect(
+      mediacleaningStepSchema.safeParse(mediacleaning({ organizationId: undefined, createOrganization: true })).success
+    ).toBe(true);
+  });
+
+  it("does not require a prospect or a deal", () => {
+    // A customer can be cleaned up without a sale in progress.
     expect(mediacleaningStepSchema.safeParse(mediacleaning()).success).toBe(true);
   });
 });

@@ -21,8 +21,10 @@ function mediacleaning(overrides: Partial<MediacleaningStepInput> = {}): Mediacl
     organizationNumber: "556677-8899",
     address: "Storgatan 1",
     city: "Stockholm",
+    signerName: "Anna Andersson",
     documentTypes: ["cancellation"],
     suppliers: [supplier()],
+    organizationId: 7,
     ...overrides
   } as MediacleaningStepInput;
 }

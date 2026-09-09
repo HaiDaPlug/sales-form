@@ -56,7 +56,9 @@ export const initialMediacleaning: MediacleaningStepData = {
   documentTypes: [],
   suppliers: [],
   internalComment: "",
+  signerName: "",
   organizationId: "",
+  leadId: "",
   dealId: "",
   createOrganization: false
 };

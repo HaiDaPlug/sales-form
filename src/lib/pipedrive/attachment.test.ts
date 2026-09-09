@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The Pipedrive service is mocked wholesale: these tests are about routing
- * decisions (which record a document lands on), not about HTTP.
+ * decisions (which record a document and its note land on), not about HTTP.
  */
 vi.mock("@/lib/pipedrive/service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/pipedrive/service")>()),
@@ -20,9 +20,9 @@ const { attachDocument, resolveAttachmentTarget } = await import("@/lib/pipedriv
 const { resetEnvCache } = await import("@/lib/config/env");
 
 const document = {
-  fileName: "mediacleaning-andersson-ab-2026-08-14.txt",
-  contentType: "text/plain; charset=utf-8",
-  blob: new Blob(["utkast"], { type: "text/plain" })
+  fileName: "mediacleaning-andersson-ab-2026-08-14.pdf",
+  contentType: "application/pdf",
+  blob: new Blob(["utkast"], { type: "application/pdf" })
 };
 
 beforeEach(() => {
@@ -33,13 +33,17 @@ beforeEach(() => {
 });
 
 describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
-  it("prefers the deal when both a deal and an organization are given", () => {
-    return expect(resolveAttachmentTarget({ dealId: 42, organizationId: 7 })).resolves.toMatchObject({
-      target: { kind: "deal", dealId: 42 }
-    });
+  /**
+   * The client's rule: documents are sent as Smart Docs from the customer's own
+   * page, so the file belongs to the organization whatever sale it came from.
+   */
+  it("files the document under the organization even when a sale is linked", async () => {
+    const resolved = await resolveAttachmentTarget({ leadId: "lead-1", dealId: 42, organizationId: 7 });
+
+    expect(resolved.organizationId).toBe(7);
   });
 
-  it("verifies the deal belongs to the organization before using it", async () => {
+  it("verifies a linked deal belongs to the organization before using it", async () => {
     await resolveAttachmentTarget({ dealId: 42, organizationId: 7 });
 
     expect(service.assertDealBelongsToOrganization).toHaveBeenCalledWith(42, 7);
@@ -51,17 +55,22 @@ describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
     await expect(resolveAttachmentTarget({ dealId: 42, organizationId: 7 })).rejects.toThrow("fel organisation");
   });
 
-  it("falls back to the organization when there is no deal", () => {
-    return expect(resolveAttachmentTarget({ organizationId: 7 })).resolves.toMatchObject({
-      target: { kind: "organization", organizationId: 7 }
-    });
+  /** The internal comment belongs with the sale, in this order of preference. */
+  it.each([
+    ["the prospect when one is linked", { leadId: "lead-1", dealId: 42, organizationId: 7 }, { kind: "lead", leadId: "lead-1" }],
+    ["the deal when there is no prospect", { dealId: 42, organizationId: 7 }, { kind: "deal", dealId: 42 }],
+    ["the organization when there is neither", { organizationId: 7 }, { kind: "organization", organizationId: 7 }]
+  ])("sends the note to %s", async (_label, input, expected) => {
+    const resolved = await resolveAttachmentTarget(input);
+
+    expect(resolved.noteTarget).toEqual(expected);
   });
 
-  it("treats a blank deal id as no deal", () => {
+  it("treats blank ids as absent", async () => {
     // Untouched form fields arrive as empty strings, not undefined.
-    return expect(resolveAttachmentTarget({ dealId: "", organizationId: 7 })).resolves.toMatchObject({
-      target: { kind: "organization", organizationId: 7 }
-    });
+    const resolved = await resolveAttachmentTarget({ leadId: "", dealId: "", organizationId: 7 });
+
+    expect(resolved.noteTarget).toEqual({ kind: "organization", organizationId: 7 });
   });
 
   it("creates an organization when asked and none exists (S17)", async () => {
@@ -73,7 +82,7 @@ describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
       name: "Andersson AB",
       address: "Storgatan 1, Stockholm"
     });
-    expect(result.target).toMatchObject({ kind: "organization", organizationId: 500 });
+    expect(result.organizationId).toBe(500);
     expect(result.createdOrganizationId).toBe(500);
   });
 
@@ -92,7 +101,7 @@ describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
       });
 
       // A customer registered here must carry the same identity as one created
-      // from the deal step, or the two records cannot be matched later.
+      // from the prospect step, or the two records cannot be matched later.
       expect(service.createOrganization).toHaveBeenCalledWith(
         expect.objectContaining({ orgnr_field_key: "556677-8899" })
       );
@@ -110,61 +119,58 @@ describe("resolveAttachmentTarget (S15, S16, S17, S23)", () => {
 
     expect(service.createOrganization).not.toHaveBeenCalled();
   });
-
-  it("reports no target when nothing is selected and nothing is to be created", () => {
-    return expect(resolveAttachmentTarget({})).resolves.toMatchObject({ target: { kind: "none" } });
-  });
 });
 
 describe("attachDocument (S15, S16, S21, S22, S23)", () => {
-  it("uploads the file and note to the deal when one is selected", async () => {
+  it("uploads the file to the organization and notes the prospect", async () => {
     const result = await attachDocument({
-      dealId: 42,
+      leadId: "lead-1",
       organizationId: 7,
       document,
       noteContent: "Mediacleaning genomförd"
     });
 
     expect(service.uploadFile).toHaveBeenCalledWith(
-      expect.objectContaining({ dealId: 42, fileName: document.fileName })
+      expect.objectContaining({ organizationId: 7, fileName: document.fileName })
     );
     expect(service.createNote).toHaveBeenCalledWith(
-      expect.objectContaining({ deal_id: 42, content: "Mediacleaning genomförd" })
+      expect.objectContaining({ lead_id: "lead-1", content: "Mediacleaning genomförd" })
     );
     expect(result.warning).toBeUndefined();
     expect(result.fileId).toBe(800);
     expect(result.noteId).toBe(900);
   });
 
-  it("uploads to the organization when there is no deal (S16, S23)", async () => {
-    await attachDocument({ organizationId: 7, document, noteContent: "Avtal genererat" });
-
-    expect(service.uploadFile).toHaveBeenCalledWith(expect.objectContaining({ organizationId: 7 }));
-    expect(service.createNote).toHaveBeenCalledWith(expect.objectContaining({ org_id: 7 }));
-  });
-
-  it("never attaches to both a deal and an organization at once", async () => {
-    await attachDocument({ dealId: 42, organizationId: 7, document, noteContent: "x" });
+  /** The document must never be uploaded to the prospect (client's rule). */
+  it("never uploads the file to the prospect or the deal", async () => {
+    await attachDocument({ leadId: "lead-1", dealId: 42, organizationId: 7, document, noteContent: "x" });
 
     const upload = vi.mocked(service.uploadFile).mock.calls[0]?.[0];
 
-    expect(upload).toHaveProperty("dealId");
-    expect(upload).not.toHaveProperty("organizationId");
+    expect(upload).toHaveProperty("organizationId");
+    expect(upload).not.toHaveProperty("leadId");
+    expect(upload).not.toHaveProperty("dealId");
+  });
+
+  it("notes an existing deal when there is no prospect", async () => {
+    await attachDocument({ dealId: 42, organizationId: 7, document, noteContent: "Avtal genererat" });
+
+    expect(service.createNote).toHaveBeenCalledWith(expect.objectContaining({ deal_id: 42 }));
   });
 
   it("returns a warning rather than throwing when the upload fails", async () => {
     // The document already exists at this point — the seller must still get it.
     vi.mocked(service.uploadFile).mockRejectedValue(new Error("403 saknar behörighet"));
 
-    const result = await attachDocument({ dealId: 42, document, noteContent: "x" });
+    const result = await attachDocument({ organizationId: 7, document, noteContent: "x" });
 
     expect(result.warning).toContain("403 saknar behörighet");
   });
 
-  it("returns a warning when there is nowhere to attach", async () => {
+  it("returns a warning when there is no organization to file under", async () => {
     const result = await attachDocument({ document, noteContent: "x" });
 
-    expect(result.target.kind).toBe("none");
+    expect(result.organizationId).toBeUndefined();
     expect(result.warning).toBeTruthy();
     expect(service.uploadFile).not.toHaveBeenCalled();
   });
@@ -174,7 +180,7 @@ describe("attachDocument (S15, S16, S21, S22, S23)", () => {
     // distinguishable.
     vi.mocked(service.createNote).mockRejectedValue(new Error("note misslyckades"));
 
-    const result = await attachDocument({ dealId: 42, document, noteContent: "x" });
+    const result = await attachDocument({ organizationId: 7, document, noteContent: "x" });
 
     expect(result.fileId).toBe(800);
     expect(result.noteId).toBeUndefined();
@@ -185,7 +191,7 @@ describe("attachDocument (S15, S16, S21, S22, S23)", () => {
   it("does not attempt the note when the upload failed", async () => {
     vi.mocked(service.uploadFile).mockRejectedValue(new Error("403"));
 
-    const result = await attachDocument({ dealId: 42, document, noteContent: "x" });
+    const result = await attachDocument({ organizationId: 7, document, noteContent: "x" });
 
     expect(service.createNote).not.toHaveBeenCalled();
     expect(result.fileId).toBeUndefined();

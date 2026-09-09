@@ -21,10 +21,16 @@ const STATEMENTS = [
    )`,
   `CREATE INDEX IF NOT EXISTS history_seller_created_idx
      ON history (seller_option_id, created_at DESC)`,
+  /**
+   * `organization_number` is nullable and unique only among the rows that have
+   * one: most of the shipped list is still waiting on numbers from the client,
+   * and Postgres treats NULLs as distinct, so those rows coexist while any
+   * supplier a seller adds is deduplicated by identity.
+   */
   `CREATE TABLE IF NOT EXISTS suppliers (
      id TEXT PRIMARY KEY,
      name TEXT NOT NULL,
-     organization_number TEXT NOT NULL UNIQUE,
+     organization_number TEXT UNIQUE,
      address TEXT NOT NULL,
      email TEXT,
      active BOOLEAN NOT NULL DEFAULT TRUE,
