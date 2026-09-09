@@ -2,6 +2,15 @@ import { assertCustomFieldMappings, ConfigurationError, getPipedriveConfig } fro
 import type { CrmRecordId, SellerIdentity } from "@/lib/crm/types";
 import type { MeetingStepInput, ProspectStepInput } from "@/lib/crm/schemas";
 import { prospectTitle, UNDERLAG_LABELS, type PortalUpdatableUnderlag, type UnderlagStatus } from "@/lib/crm/prospect";
+import {
+  clockToMinutes,
+  computeAvailableSlots,
+  freeTechniciansAt,
+  getSlotWindow,
+  isWeekend,
+  type AvailableSlot,
+  type BusySpan
+} from "@/lib/meetings/slots";
 import { PipedriveApiError, pipedriveRequest } from "@/lib/pipedrive/client";
 import type {
   MeetingOverlap,
@@ -699,10 +708,130 @@ function shiftDate(date: string, days: number): string {
   return utcDateTimeParts(shifted.getTime()).date;
 }
 
+/**
+ * The technicians' bookings on a date, as minute spans in Swedish local time.
+ *
+ * Activities are stored in UTC, so a Swedish day spills into two UTC dates; the
+ * query spans a day either side and each activity is converted back before it
+ * is measured. Undated to-dos have no span and cannot block a slot.
+ *
+ * `user_id=0` asks for every user's activities. Without a configured technician
+ * pool that is exactly right — any booking blocks the slot — and with one, the
+ * spans are filtered down to those technicians.
+ */
+export async function findBusySpans(date: string, technicianIds: number[]): Promise<BusySpan[]> {
+  const activities = await pipedriveRequest<AnyRecord[]>("/activities", {
+    query: {
+      user_id: 0,
+      start_date: shiftDate(date, -1),
+      end_date: shiftDate(date, 2),
+      limit: 200
+    }
+  });
+
+  const pool = technicianIds.length > 0 ? technicianIds : [0];
+
+  return (activities ?? []).flatMap((activity) => {
+    const dueDate = asString(activity.due_date);
+    const dueTime = asString(activity.due_time);
+
+    if (!dueDate || !dueTime || activity.active_flag === false) return [];
+
+    const local = storedTimeAsStockholm(dueDate, dueTime);
+    if (local.date !== date) return [];
+
+    // With no pool configured every booking blocks the single anonymous
+    // resource; with one, an activity owned by somebody else is irrelevant.
+    const ownerId = Number(activity.user_id ?? activity.owner_id);
+    const userId = technicianIds.length === 0 ? 0 : ownerId;
+
+    if (!pool.includes(userId)) return [];
+
+    const startMinutes = clockToMinutes(local.time);
+    // A zero-length activity still occupies its start minute.
+    const duration = durationToMinutes(activity.duration) || 1;
+
+    return [{ userId, startMinutes, endMinutes: startMinutes + duration }];
+  });
+}
+
+/** The bookable times on a date, and who could take each one. */
+export async function findAvailableSlots(date: string, now = new Date()): Promise<AvailableSlot[]> {
+  if (isWeekend(date)) return [];
+
+  const window = getSlotWindow();
+  const technicianIds = getPipedriveConfig().technicianUserIds;
+  const busy = await findBusySpans(date, technicianIds);
+
+  return computeAvailableSlots({
+    window,
+    technicianIds,
+    busy,
+    nowMinutes: isToday(date, now) ? stockholmMinutesOfDay(now) : undefined
+  });
+}
+
+/** True when `date` is the current Swedish calendar date. */
+function isToday(date: string, now: Date): boolean {
+  const parts = stockholmDateTimeParts(now.getTime());
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+
+  return `${pad(parts.year, 4)}-${pad(parts.month)}-${pad(parts.day)}` === date;
+}
+
+function stockholmMinutesOfDay(now: Date): number {
+  const parts = stockholmDateTimeParts(now.getTime());
+  return parts.hour * 60 + parts.minute;
+}
+
+/**
+ * The technician who will own a booking, re-checked at submit time.
+ *
+ * Returns undefined when the slot has been taken since the seller chose it —
+ * the booking is then refused rather than double-booked. With no configured
+ * pool the anonymous resource resolves to no owner, and the activity stays with
+ * the API token's user as before.
+ */
+export async function resolveSlotTechnician(
+  date: string,
+  time: string,
+  durationMinutes: number,
+  now = new Date()
+): Promise<{ available: boolean; technicianId?: number }> {
+  if (isWeekend(date)) return { available: false };
+
+  const window = getSlotWindow();
+  const technicianIds = getPipedriveConfig().technicianUserIds;
+  const startMinutes = clockToMinutes(time);
+
+  if (isToday(date, now) && startMinutes < stockholmMinutesOfDay(now) + window.minLeadMinutes) {
+    return { available: false };
+  }
+
+  const busy = await findBusySpans(date, technicianIds);
+  const pool = technicianIds.length > 0 ? technicianIds : [0];
+  const free = freeTechniciansAt(startMinutes, durationMinutes, pool, busy);
+
+  if (free.length === 0) return { available: false };
+
+  return { available: true, technicianId: technicianIds.length > 0 ? free[0] : undefined };
+}
+
+/** The slot a seller chose was taken before they submitted. */
+export class SlotUnavailableError extends Error {
+  readonly status = 409;
+
+  constructor() {
+    super("Tiden är inte längre ledig. Välj en annan tid.");
+    this.name = "SlotUnavailableError";
+  }
+}
+
 export function buildMeetingActivityPayload(
   data: MeetingStepInput,
   parties: ResolvedMeetingParties,
-  seller: SellerIdentity
+  seller: SellerIdentity,
+  technicianId?: number
 ): PipedriveActivityPayload {
   const pipedriveTime = stockholmMeetingTimeAsUtc(data.date, data.time);
   const note = [
@@ -729,11 +858,14 @@ export function buildMeetingActivityPayload(
     // new contact's meeting orphaned.
     person_id: parties.personId,
     org_id: parties.organizationId,
-    // No `user_id`: the seller is a custom-field option, not a user account, so
-    // sending its id here was rejected as an unknown user. The activity is owned
-    // by the token's own user and names the seller in its note instead.
+    // The technician who has the slot free owns the meeting, so it lands in
+    // their calendar. Never the seller: they are a custom-field option, not a
+    // user account, and sending an option id here was rejected as an unknown
+    // user — which is why the seller is named in the note instead. With no
+    // technician pool configured the activity stays with the token's user.
+    user_id: technicianId,
     // Blank rather than absent would write an empty note and location onto the
-    // activity; agenda, technician notes and location are all optional now.
+    // activity; location is optional.
     location: data.locationOrLink || undefined,
     note: note || undefined
   };

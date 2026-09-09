@@ -14,6 +14,7 @@ import {
   createOrganization,
   createPerson,
   DealOwnershipError,
+  findAvailableSlots,
   findMeetingOverlaps,
   ExistingRecordProtectionError,
   PartialResolutionError,
@@ -26,6 +27,8 @@ import {
   MIN_SEARCH_TERM_LENGTH,
   resolveMeetingParties,
   resolveProspectParties,
+  resolveSlotTechnician,
+  SlotUnavailableError,
   searchDeals,
   searchLeads,
   searchOrganizations,
@@ -91,6 +94,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (operation === "users") return jsonOk(await getUsers());
     if (operation === "sellers") return jsonOk(await getSellers());
 
+    if (operation === "activities/slots") {
+      return jsonOk(await findAvailableSlots(requiredQuery(searchParams, "date")));
+    }
+
     if (operation === "activities/overlaps") {
       const durationMinutes = Number(searchParams.get("durationMinutes"));
 
@@ -140,6 +147,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const seller = sellerFromSession(session);
       const customerName = parsed.organization?.name ?? parsed.person.name;
 
+      // The slot is checked again here, against the calendars as they are now:
+      // the seller picked from a list that may be minutes old, and two sellers
+      // can reach the same slot at once. Nothing is created if it has gone.
+      const slot = await resolveSlotTechnician(parsed.date, parsed.time, parsed.durationMinutes);
+
+      if (!slot.available) throw new SlotUnavailableError();
+
       let meetingParties: ResolvedMeetingParties | undefined;
 
       try {
@@ -147,7 +161,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         // activity can be attached to anything.
         meetingParties = await resolveMeetingParties(parsed);
 
-        const activity = await createActivity(buildMeetingActivityPayload(parsed, meetingParties, seller));
+        const activity = await createActivity(
+          buildMeetingActivityPayload(parsed, meetingParties, seller, slot.technicianId)
+        );
 
         // The activity exists from here on. History is a local convenience, so
         // its failure must never turn a completed booking into an error the
@@ -169,7 +185,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         // re-creating the same records on a later step or a re-run.
         return jsonOk({ ...(activity as Record<string, unknown>), _parties: meetingParties });
       } catch (error) {
-        if (error instanceof ExistingRecordProtectionError) throw error;
+        if (error instanceof ExistingRecordProtectionError || error instanceof SlotUnavailableError) throw error;
 
         // Resolution may have created records before it failed; recover them so
         // they are logged and returned rather than orphaned.
@@ -442,7 +458,7 @@ function jsonError(error: unknown, status?: number) {
     return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
   }
 
-  if (error instanceof ExistingRecordProtectionError) {
+  if (error instanceof ExistingRecordProtectionError || error instanceof SlotUnavailableError) {
     return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
   }
 

@@ -562,6 +562,57 @@ textarea:disabled {
 }
 
 /* =============================================================================
+   Meeting slots
+
+   The bookable times for a date, as a wrapping grid of buttons. Only times the
+   technicians actually have free are rendered, so there is no disabled state:
+   everything on screen can be picked.
+   ========================================================================== */
+
+.slot-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Empty while slots are shown, and the browser would still reserve its line. */
+.slot-status:empty {
+  display: none;
+}
+
+.slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.slot {
+  min-height: 42px;
+  padding: 10px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.14s var(--ease), background 0.14s var(--ease), color 0.14s var(--ease);
+}
+
+.slot:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.slot[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* =============================================================================
    Date & time pickers
 
    Replaces the native `date`/`time` controls, which render in the browser's own
@@ -751,6 +802,16 @@ textarea:disabled {
 }
 
 /* Days borrowed from the neighbouring months stay pickable, just quiet. */
+/* Past dates on a picker that forbids them. */
+.calendar-day:disabled {
+  color: var(--line-strong);
+  cursor: not-allowed;
+}
+
+.calendar-day:disabled:hover {
+  background: transparent;
+}
+
 .calendar-day[data-outside="true"] {
   color: var(--muted);
   opacity: 0.55;

@@ -65,6 +65,8 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
   /** Non-empty while the overlap dialog is waiting on the seller's decision. */
   const [pendingOverlaps, setPendingOverlaps] = useState<MeetingOverlap[]>([]);
   const [checkingOverlaps, setCheckingOverlaps] = useState(false);
+  /** Bumped when a booking is refused, so the picker re-reads the calendars. */
+  const [slotRefreshToken, setSlotRefreshToken] = useState(0);
   const reference = useReferenceData();
 
   const active = STEPS[activeStep];
@@ -375,6 +377,13 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
         if (key === "meeting") applyMeetingParties(result.parties);
       }
 
+      // The slot went while the seller was filling the form in. Re-read the
+      // list so the times on screen are the ones still free.
+      if (response.status === 409 && key === "meeting") {
+        setMeeting((current) => ({ ...current, time: "" }));
+        setSlotRefreshToken((token) => token + 1);
+      }
+
       throw new Error(result.error ?? "Något gick fel");
     }
 
@@ -393,7 +402,14 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
         applyMeetingParties(parties);
       }
 
-      return recordId ? `Mötet är bokat i Pipedrive (aktivitet ${recordId}).` : "Mötet är bokat i Pipedrive.";
+      // Names what was booked, so the seller can check it against the customer
+      // without opening Pipedrive.
+      const when = `${formatBookingDate(meeting.date)} kl. ${meeting.time}`;
+      const withWhom = meeting.organization?.name
+        ? `${meeting.person.name} (${meeting.organization.name})`
+        : meeting.person.name;
+
+      return `Mötet är bokat: ${when} med ${withWhom}.${recordId ? ` Aktivitet ${recordId} i Pipedrive.` : ""}`;
     }
 
     if (key === "prospect" && typeof recordId === "string") {
@@ -582,7 +598,13 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
         <div className="workspace">
           <section className="panel">
             {active.kind === "meeting" && (
-              <MeetingStep data={meeting} onChange={setMeeting} reference={reference} sellerName={currentUser} />
+              <MeetingStep
+                data={meeting}
+                onChange={setMeeting}
+                reference={reference}
+                sellerName={currentUser}
+                slotRefreshToken={slotRefreshToken}
+              />
             )}
             {active.kind === "prospect" && (
               <ProspectStep
@@ -728,4 +750,16 @@ function describeAttachment(target: string | null): string {
 
 function formatTimestamp(value: string) {
   return new Date(value).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
+}
+
+/** `2026-09-14` → `måndag 14 september 2026`, for the booking confirmation. */
+function formatBookingDate(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+
+  return new Date(year, month - 1, day).toLocaleDateString("sv-SE", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  });
 }
