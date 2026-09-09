@@ -491,6 +491,22 @@ textarea:disabled {
   font-size: 12px;
 }
 
+/* A value shown in the form grid that the seller cannot edit — the logged-in
+   seller. Same rhythm as an input, but flat and dashed so it does not invite
+   typing. */
+.readonly-value {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
 /* Marks a field the step cannot be submitted without. Decorative — the control
    carries `aria-required`, so screen readers are not read a stray asterisk. */
 .required-mark {

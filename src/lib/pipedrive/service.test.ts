@@ -368,45 +368,37 @@ describe("partial resolution failures preserve created records", () => {
   });
 });
 
+/** The logged-in seller, as the route reads it from the session. */
+const seller = { optionId: 74, name: "Adam Westin" };
+const parties = { personId: 11, createdPerson: true, createdOrganization: false };
+
 describe("buildMeetingActivityPayload", () => {
   it("converts Stockholm summer time to UTC for Pipedrive Calendar", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ date: "2026-08-19", time: "16:10" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties({ date: "2026-08-19", time: "16:10" }), parties, seller);
 
     expect(payload.due_date).toBe("2026-08-19");
     expect(payload.due_time).toBe("14:10");
   });
 
   it("converts Stockholm winter time with the standard-time offset", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ date: "2026-01-19", time: "16:10" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties({ date: "2026-01-19", time: "16:10" }), parties, seller);
 
     expect(payload.due_date).toBe("2026-01-19");
     expect(payload.due_time).toBe("15:10");
   });
 
   it("moves the Pipedrive due date back when UTC conversion crosses midnight", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ date: "2026-06-02", time: "00:30" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties({ date: "2026-06-02", time: "00:30" }), parties, seller);
 
     expect(payload.due_date).toBe("2026-06-01");
     expect(payload.due_time).toBe("22:30");
   });
 
-  it("folds agenda, technician notes and internal comment into one note", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ internalComment: "Ring först" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+  it("folds seller, agenda, technician notes and internal comment into one note", () => {
+    const payload = buildMeetingActivityPayload(meetingParties({ internalComment: "Ring först" }), parties, seller);
 
     expect(payload.note).toBe(
-      ["Genomgång", "IT-tekniker: Ta med demokonto", "Internt: Ring först"].join("\n\n")
+      ["Säljare: Adam Westin", "Genomgång", "IT-tekniker: Ta med demokonto", "Internt: Ring först"].join("\n\n")
     );
     expect(payload.location).toBe("Teams");
   });
@@ -417,57 +409,36 @@ describe("buildMeetingActivityPayload", () => {
    * made Pipedrive reject the booking as an unknown user.
    */
   it("names the seller in the note rather than owning the activity with them", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ sellerId: 74, sellerName: "Adam Westin" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties(), parties, seller);
 
     expect(payload.user_id).toBeUndefined();
-    expect(payload.note).toBe(
-      ["Säljare: Adam Westin", "Genomgång", "IT-tekniker: Ta med demokonto"].join("\n\n")
-    );
-  });
-
-  it("leaves the note free of a seller line when none was chosen", () => {
-    const payload = buildMeetingActivityPayload(meetingParties(), {
-      personId: 11,
-      createdPerson: true,
-      createdOrganization: false
-    });
-
-    expect(payload.note).not.toContain("Säljare:");
+    expect(payload.note?.startsWith("Säljare: Adam Westin")).toBe(true);
   });
 
   it("names the activity after the meeting type", () => {
-    const payload = buildMeetingActivityPayload(meetingParties(), {
-      personId: 11,
-      createdPerson: true,
-      createdOrganization: false
-    });
+    const payload = buildMeetingActivityPayload(meetingParties(), parties, seller);
 
     expect(payload.subject).toBe("Möte: IT-genomgång");
   });
 
   it("falls back to a plain subject when no meeting type was given", () => {
-    const payload = buildMeetingActivityPayload(meetingParties({ meetingType: "" }), {
-      personId: 11,
-      createdPerson: true,
-      createdOrganization: false
-    });
+    const payload = buildMeetingActivityPayload(meetingParties({ meetingType: "" }), parties, seller);
 
     // "Möte: " with nothing after it is what a blank type used to produce.
     expect(payload.subject).toBe("Möte");
   });
 
-  it("omits the note and location rather than writing them blank", () => {
-    // All three are optional, so a meeting booked without them must not stamp
-    // empty values onto the Pipedrive activity.
+  it("omits the location rather than writing it blank, and keeps the note to the seller line", () => {
+    // Agenda, notes and location are optional, so a meeting booked without them
+    // must not stamp empty values onto the Pipedrive activity. The seller line
+    // is always there: the session always has one.
     const payload = buildMeetingActivityPayload(
       meetingParties({ agenda: "", technicianNotes: "", locationOrLink: "" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
+      parties,
+      seller
     );
 
-    expect(payload.note).toBeUndefined();
+    expect(payload.note).toBe("Säljare: Adam Westin");
     expect(payload.location).toBeUndefined();
   });
 });

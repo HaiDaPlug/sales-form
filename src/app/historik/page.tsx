@@ -23,7 +23,8 @@ export default async function HistoryPage({ searchParams }: PageProps) {
 
   const { kind: kindParam } = await searchParams;
   const kind = WORKFLOW_KINDS.includes(kindParam as WorkflowKind) ? (kindParam as WorkflowKind) : undefined;
-  const entries = await listHistory({ kind, limit: 200 });
+  // Only this seller's runs — the same rule the API applies.
+  const entries = await listHistory({ kind, limit: 200, sellerOptionId: session.sellerOptionId });
 
   return (
     <main className="history-page">
@@ -36,7 +37,7 @@ export default async function HistoryPage({ searchParams }: PageProps) {
         <div>
           <p className="eyebrow">Historik</p>
           <h1>Körningar</h1>
-          <p className="hint">Alla körda arbetsflöden, senaste först. Inloggad som {session.subject}.</p>
+          <p className="hint">Dina körda arbetsflöden, senaste först. Inloggad som {session.subject}.</p>
         </div>
         <Link className="btn" href="/">
           Till arbetsflöden

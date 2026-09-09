@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { requireSession, UnauthorizedError } from "@/lib/auth/server";
+import { requireSession, sellerFromSession, UnauthorizedError } from "@/lib/auth/server";
 import { contractDocumentRequestSchema } from "@/lib/crm/schemas";
 import { recordHistorySafely } from "@/lib/history/store";
 import {
@@ -19,9 +19,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const session = await requireSession();
+    const seller = sellerFromSession(session);
     const parsed = contractDocumentRequestSchema.parse(await request.json());
     const contract = parsed.contract;
-    const contractPdf = await generateContractPdf(contract);
+    const contractPdf = await generateContractPdf(contract, seller);
     const pdf = contract.includeMediacleaningDocuments && parsed.mediacleaning
       ? await combinePdfDocuments(
           [contractPdf, await generateMediacleaningPdf(parsed.mediacleaning)],
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
       : contractPdf;
 
     const noteContent = [
-      buildContractNote(contract, pdf.fileName),
+      buildContractNote(contract, seller, pdf.fileName),
       contract.includeMediacleaningDocuments && parsed.mediacleaning
         ? buildMediacleaningNote(parsed.mediacleaning, pdf.fileName)
         : ""
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
       // warning on a completed run, not a failed run.
       status: attachment.warning ? "warning" : "success",
       createdBy: session.subject,
+      sellerOptionId: session.sellerOptionId,
       customerName: contract.companyName,
       summary: `Avtal för ${contract.companyName} — ${contract.price} (${contract.paymentInterval})${
         contract.includeMediacleaningDocuments ? " + Mediacleaning" : ""

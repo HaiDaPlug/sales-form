@@ -6,6 +6,7 @@ import {
   type PDFPage
 } from "pdf-lib";
 import type { ContractStepInput, MediacleaningStepInput } from "@/lib/crm/schemas";
+import type { SellerIdentity } from "@/lib/crm/types";
 import {
   draftMediacleaningTemplate,
   type MediacleaningTemplate
@@ -119,8 +120,13 @@ export function combinedContractFileName(companyName: string): string {
   return `Avtal_och_Mediacleaning_${sanitizeFileNamePart(companyName)}_${today()}_utkast.pdf`;
 }
 
-/** Creates the documented Digital Kontakt contract-summary structure as PDF. */
-export async function generateContractPdf(data: ContractStepInput): Promise<GeneratedDocument> {
+/**
+ * Creates the documented Digital Kontakt contract-summary structure as PDF.
+ *
+ * The seller printed on it is the logged-in seller, passed in by the route
+ * from the session, so the document can never name a colleague.
+ */
+export async function generateContractPdf(data: ContractStepInput, seller: SellerIdentity): Promise<GeneratedDocument> {
   const document = await PDFDocument.create();
   const writer = await PdfWriter.create(document);
 
@@ -133,7 +139,7 @@ export async function generateContractPdf(data: ContractStepInput): Promise<Gene
   writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
   writer.keyValue("Kundens adress", data.address);
   writer.keyValue("Firmatecknare/kontaktperson", data.signerName);
-  writer.keyValue("Ansvarig säljare", data.sellerName);
+  writer.keyValue("Ansvarig säljare", seller.name);
 
   writer.heading("Avtalets omfattning");
   writer.paragraph(
@@ -158,7 +164,7 @@ export async function generateContractPdf(data: ContractStepInput): Promise<Gene
     "Genom underskrift bekräftar parterna att uppgifterna ovan har kontrollerats och att den slutliga avtalstexten har godkänts."
   );
   writer.signature("För kunden", data.signerName);
-  writer.signature("För Digital Kontakt Sverige AB", data.sellerName);
+  writer.signature("För Digital Kontakt Sverige AB", seller.name);
 
   return writer.finish(`Avtal_${sanitizeFileNamePart(data.companyName)}_${today()}_utkast.pdf`);
 }
@@ -179,7 +185,7 @@ export function buildMediacleaningNote(data: MediacleaningStepInput, fileName: s
     .join("\n");
 }
 
-export function buildContractNote(data: ContractStepInput, fileName: string): string {
+export function buildContractNote(data: ContractStepInput, seller: SellerIdentity, fileName: string): string {
   return [
     "Avtalssammanställning genererad",
     `Datum: ${today()}`,
@@ -188,7 +194,7 @@ export function buildContractNote(data: ContractStepInput, fileName: string): st
     `Pris: ${data.price}`,
     `Betalningsintervall: ${paymentIntervalLabel(data.paymentInterval)}`,
     `Bindningstid: ${data.bindingPeriodMonths} månader`,
-    `Säljare: ${data.sellerName}`,
+    `Säljare: ${seller.name}`,
     `Fil: ${fileName}`
   ].join("\n");
 }

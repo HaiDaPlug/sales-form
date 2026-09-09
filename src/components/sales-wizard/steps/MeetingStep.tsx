@@ -1,12 +1,20 @@
 import { useState } from "react";
-import { CheckLabel, FormSection, ReferenceSelect, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import {
+  CheckLabel,
+  FormSection,
+  ReadOnlyField,
+  ReferenceSelect,
+  TextArea,
+  TextField,
+  type StepProps
+} from "@/components/sales-wizard/fields";
 import { DateField } from "@/components/sales-wizard/DateField";
 import { TimeField } from "@/components/sales-wizard/TimeField";
 import { LookupBox, type ConflictChoice, type FieldConflict } from "@/components/sales-wizard/LookupBox";
 import { findPersonConflicts } from "@/components/sales-wizard/utils";
 import type { MeetingStepData } from "@/lib/crm/types";
 
-export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStepData>) {
+export function MeetingStep({ data, onChange, reference, sellerName }: StepProps<MeetingStepData>) {
   // Differences between the typed contact details and the linked record. Held
   // in the step rather than the wizard: they are resolved here and never submitted.
   const [conflicts, setConflicts] = useState<FieldConflict[]>([]);
@@ -125,19 +133,9 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
 
       <FormSection title="Möte">
         <TextField label="Mötestyp" value={data.meetingType} onChange={(meetingType) => onChange({ ...data, meetingType })} />
-        <ReferenceSelect
-          label="Säljare"
-          value={data.sellerId}
-          options={reference.sellers}
-          loading={reference.loading}
-          error={reference.error}
-          onChange={(sellerId) => {
-            // The name is what reaches Pipedrive — the activity note is the only
-            // place it can appear — so it has to be resolved and stored here.
-            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
-            onChange({ ...data, sellerId, sellerName: seller?.name ?? "" });
-          }}
-        />
+        {/* The booking is made in the logged-in seller's name; the server
+            attaches it, so there is nothing here to choose or edit. */}
+        <ReadOnlyField label="Säljare" value={`Inloggad som: ${sellerName}`} />
         <ReferenceSelect
           label="IT-tekniker"
           value={data.technicianId}

@@ -189,13 +189,8 @@ export const meetingStepSchema = z.object({
   agenda: optionalText,
   technicianNotes: optionalText,
   internalComment: optionalText,
-  sellerId: recordId.optional(),
-  /**
-   * Carried alongside the id because an activity has nowhere to store it: the
-   * sellers are options on a custom *deal* field, and no equivalent activity
-   * field exists in the account, so the name is written into the note instead.
-   */
-  sellerName: optionalText,
+  // No seller here: the seller is whoever is logged in, and the server attaches
+  // that identity itself. A field for it would let a request name a colleague.
   technicianId: recordId.optional(),
   technicianName: optionalText,
   date: isoDate("Datum"),
@@ -287,8 +282,8 @@ export const contractStepSchema = z.object({
   organizationNumber,
   signerName: requiredText("Firmatecknare/kontaktperson"),
   address: requiredText("Adress"),
-  sellerId: recordId.optional(),
-  sellerName: requiredText("Ansvarig säljare"),
+  // The seller printed on the contract is the logged-in seller, attached by
+  // the server — never a name typed or chosen in the form.
   price: z.coerce.number().positive("Pris krävs"),
   paymentInterval: z.enum(["monthly", "quarterly", "semiannual"]),
   bindingPeriodMonths: z.coerce.number().positive("Bindningstid krävs"),

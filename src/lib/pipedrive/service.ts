@@ -1,5 +1,5 @@
 import { assertCustomFieldMappings, getPipedriveConfig } from "@/lib/config/pipedrive";
-import type { CrmRecordId } from "@/lib/crm/types";
+import type { CrmRecordId, SellerIdentity } from "@/lib/crm/types";
 import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
 import { PipedriveApiError, pipedriveRequest } from "@/lib/pipedrive/client";
 import type {
@@ -598,14 +598,15 @@ function shiftDate(date: string, days: number): string {
 
 export function buildMeetingActivityPayload(
   data: MeetingStepInput,
-  parties: ResolvedMeetingParties
+  parties: ResolvedMeetingParties,
+  seller: SellerIdentity
 ): PipedriveActivityPayload {
   const pipedriveTime = stockholmMeetingTimeAsUtc(data.date, data.time);
   const note = [
     // The seller leads the note because it is the only place an activity can
     // show them: they are options on a custom deal field rather than Pipedrive
     // users, so `user_id` cannot name them and no custom activity field exists.
-    data.sellerName ? `Säljare: ${data.sellerName}` : "",
+    `Säljare: ${seller.name}`,
     data.agenda,
     data.technicianNotes ? `IT-tekniker: ${data.technicianNotes}` : "",
     data.internalComment ? `Internt: ${data.internalComment}` : ""

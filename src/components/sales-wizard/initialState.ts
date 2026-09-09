@@ -12,6 +12,8 @@ import type {
  * actually submits. A copied fixture is what hid the S01 bug: the schema test
  * omitted `organization` entirely, a shape the wizard never produces, so a
  * blank-but-present organization went unvalidated until it failed in the form.
+ *
+ * No seller anywhere: the seller is the session, attached by the server.
  */
 
 export const initialMeeting: MeetingStepData = {
@@ -21,8 +23,6 @@ export const initialMeeting: MeetingStepData = {
   agenda: "",
   technicianNotes: "",
   internalComment: "",
-  sellerId: "",
-  sellerName: "",
   technicianId: "",
   technicianName: "",
   date: "",
@@ -66,8 +66,6 @@ export const initialContract: ContractStepData = {
   organizationNumber: "",
   signerName: "",
   address: "",
-  sellerId: "",
-  sellerName: "",
   price: 0,
   paymentInterval: "monthly",
   bindingPeriodMonths: 12,

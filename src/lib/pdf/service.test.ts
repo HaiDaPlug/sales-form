@@ -27,13 +27,15 @@ function mediacleaning(overrides: Partial<MediacleaningStepInput> = {}): Mediacl
   } as MediacleaningStepInput;
 }
 
+/** The logged-in seller; the route passes it from the session. */
+const seller = { optionId: 73, name: "Roble" };
+
 function contract(overrides: Partial<ContractStepInput> = {}): ContractStepInput {
   return {
     companyName: "Andersson AB",
     organizationNumber: "556677-8899",
     signerName: "Anna Andersson",
     address: "Storgatan 1",
-    sellerName: "Roble",
     price: 1200,
     paymentInterval: "monthly",
     bindingPeriodMonths: 12,
@@ -128,21 +130,22 @@ describe("generateMediacleaningPdf (S18, S24)", () => {
 
 describe("generateContractPdf (S22)", () => {
   it("produces a real, parseable PDF", async () => {
-    const result = await generateContractPdf(contract());
+    const result = await generateContractPdf(contract(), seller);
 
     expect(result.contentType).toBe("application/pdf");
     await expect(pageCount(result.blob)).resolves.toBeGreaterThan(0);
   });
 
   it("puts the customer name and date in the file name", async () => {
-    const result = await generateContractPdf(contract());
+    const result = await generateContractPdf(contract(), seller);
 
     expect(result.fileName).toMatch(/^Avtal_Andersson_AB_\d{4}-\d{2}-\d{2}_utkast\.pdf$/);
   });
 
   it("renders every included service without failing", async () => {
     const result = await generateContractPdf(
-      contract({ includedServices: Array.from({ length: 25 }, (_, index) => `Tjänst ${index + 1}`) })
+      contract({ includedServices: Array.from({ length: 25 }, (_, index) => `Tjänst ${index + 1}`) }),
+      seller
     );
 
     // Long lists must flow onto a second page rather than overflow one.
@@ -152,7 +155,7 @@ describe("generateContractPdf (S22)", () => {
 
 describe("combined contract and Mediacleaning package (5.4)", () => {
   it("contains all pages from both generated documents", async () => {
-    const contractPdf = await generateContractPdf(contract());
+    const contractPdf = await generateContractPdf(contract(), seller);
     const mediaPdf = await generateMediacleaningPdf(
       mediacleaning({ documentTypes: ["cancellation", "agreementSummary"] })
     );
@@ -198,8 +201,8 @@ describe("buildMediacleaningNote (S21)", () => {
 });
 
 describe("buildContractNote (S22)", () => {
-  it("records price, interval, binding period, seller and file", () => {
-    const note = buildContractNote(contract(), "avtal.pdf");
+  it("records price, interval, binding period, the logged-in seller and file", () => {
+    const note = buildContractNote(contract(), seller, "avtal.pdf");
 
     expect(note).toContain("Avtalssammanställning genererad");
     expect(note).toContain("Pris: 1200");

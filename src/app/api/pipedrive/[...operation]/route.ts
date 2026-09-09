@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { requireSession, UnauthorizedError } from "@/lib/auth/server";
+import type { SessionPayload } from "@/lib/auth/session";
+import { requireSession, sellerFromSession, UnauthorizedError } from "@/lib/auth/server";
 import { assertCustomFieldMappings, ConfigurationError, getPipedriveConfig } from "@/lib/config/pipedrive";
 import { PipedriveApiError } from "@/lib/pipedrive/client";
 import {
@@ -131,6 +132,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     if (operation === "activities/meeting") {
       const parsed = meetingStepSchema.parse(body);
+      const seller = sellerFromSession(session);
       const customerName = parsed.organization?.name ?? parsed.person.name;
 
       let meetingParties: ResolvedMeetingParties | undefined;
@@ -140,7 +142,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         // activity can be attached to anything.
         meetingParties = await resolveMeetingParties(parsed);
 
-        const activity = await createActivity(buildMeetingActivityPayload(parsed, meetingParties));
+        const activity = await createActivity(buildMeetingActivityPayload(parsed, meetingParties, seller));
 
         // The activity exists from here on. History is a local convenience, so
         // its failure must never turn a completed booking into an error the
@@ -149,6 +151,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           kind: "meeting",
           status: "success",
           createdBy: session.subject,
+          sellerOptionId: session.sellerOptionId,
           customerName,
           summary: `${parsed.meetingType} ${parsed.date} ${parsed.time} med ${parsed.person.name}`,
           pipedriveActivityId: readRecordId(activity),
@@ -169,7 +172,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
         await recordFailure(
           "meeting",
-          session.subject,
+          session,
           customerName,
           `Mötesbokning för ${parsed.person.name}`,
           error,
@@ -207,6 +210,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           kind: "deal",
           status: "success",
           createdBy: session.subject,
+          sellerOptionId: session.sellerOptionId,
           customerName: parsed.organization.name,
           summary: `${parsed.deal.title} — ${parsed.deal.value} ${parsed.deal.currency ?? "SEK"}`,
           pipedriveDealId: readRecordId(deal),
@@ -225,7 +229,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         // person; recover it rather than losing the ID.
         const partial = parties ?? partialPartiesOf(error);
 
-        await recordFailure("deal", session.subject, parsed.organization.name, parsed.deal.title, error, partial);
+        await recordFailure("deal", session, parsed.organization.name, parsed.deal.title, error, partial);
 
         // Person/organization may already exist in Pipedrive even though the
         // deal failed. Deleting them is not an option (the token may lack
@@ -264,7 +268,7 @@ function readRecordId(record: unknown): string | number | undefined {
 
 async function recordFailure(
   kind: "meeting" | "deal",
-  createdBy: string,
+  session: SessionPayload,
   customerName: string | undefined,
   summary: string,
   error: unknown,
@@ -276,7 +280,8 @@ async function recordFailure(
     await recordHistory({
       kind,
       status: "error",
-      createdBy,
+      createdBy: session.subject,
+      sellerOptionId: session.sellerOptionId,
       customerName,
       summary,
       // Records created before the failure are logged so they are traceable

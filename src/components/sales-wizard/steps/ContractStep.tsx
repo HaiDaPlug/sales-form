@@ -1,7 +1,7 @@
 import {
   CheckLabel,
   FormSection,
-  ReferenceSelect,
+  ReadOnlyField,
   SelectField,
   TextArea,
   TextField,
@@ -13,7 +13,7 @@ import type { ContractStepData } from "@/lib/crm/types";
 export function ContractStep({
   data,
   onChange,
-  reference,
+  sellerName,
   mediacleaningReady
 }: StepProps<ContractStepData> & { mediacleaningReady: boolean }) {
   return (
@@ -56,19 +56,8 @@ export function ContractStep({
         <TextField required label="Organisationsnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
         <TextField required label="Firmatecknare/kontaktperson" value={data.signerName} onChange={(signerName) => onChange({ ...data, signerName })} />
         <TextField required label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
-        <ReferenceSelect
-          label="Säljare"
-          value={data.sellerId}
-          options={reference.sellers}
-          loading={reference.loading}
-          error={reference.error}
-          onChange={(sellerId) => {
-            // The contract prints the seller's name, so keep it in sync.
-            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
-            onChange({ ...data, sellerId, sellerName: seller?.name ?? data.sellerName });
-          }}
-        />
-        <TextField required label="Säljare namn" value={data.sellerName} onChange={(sellerName) => onChange({ ...data, sellerName })} />
+        {/* The contract prints the logged-in seller; there is nothing to choose. */}
+        <ReadOnlyField label="Ansvarig säljare" value={`Inloggad som: ${sellerName}`} />
         <TextField required label="Pris/kostnad" type="number" value={String(data.price)} onChange={(price) => onChange({ ...data, price: Number(price) })} />
         <SelectField
           label="Betalningsintervall"

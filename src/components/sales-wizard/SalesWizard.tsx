@@ -118,7 +118,6 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
           organizationNumber:
             current.organization.organizationNumber || meeting.organization?.organizationNumber || ""
         },
-        sellerId: current.sellerId || meeting.sellerId || "",
         viktigastForKunden:
           current.viktigastForKunden ||
           [meeting.technicianNotes, meeting.internalComment].filter(Boolean).join("\n\n"),
@@ -142,20 +141,12 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
 
     if (index === 3) {
-      const sellerId = String(deal.sellerId ?? meeting.sellerId ?? "");
-      // Resolved against the seller options, not `users`: the contract prints
-      // the seller's name, and the sellers are custom-field options.
-      const sellerName =
-        reference.sellers.find((option) => String(option.id) === sellerId)?.name ?? meeting.sellerName;
-
       setContract((current) => ({
         ...current,
         companyName: current.companyName || deal.organization.name || mediacleaning.companyName,
         organizationNumber: current.organizationNumber || deal.organization.organizationNumber || mediacleaning.organizationNumber,
         signerName: current.signerName || deal.person.name || meeting.person.name,
         address: current.address || deal.organization.address || mediacleaning.address,
-        sellerId: current.sellerId || sellerId,
-        sellerName: current.sellerName || sellerName || "",
         price: current.price || deal.monthlyCost || deal.deal.value || 0,
         bindingPeriodMonths: current.bindingPeriodMonths || deal.bindingPeriodMonths || 12,
         organizationId: current.organizationId || String(deal.organization.id ?? mediacleaning.organizationId ?? ""),
@@ -275,7 +266,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
     setWizardData((current) => ({
       ...current,
-      [key]: (storedValue ?? parsed.data) as WizardData[typeof key]
+      [key]: (storedValue ?? parsed.data) as WizardData[keyof WizardData]
     }));
     setSubmitState({ status: "loading", message: "Skickar..." });
 
@@ -528,16 +519,24 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
         <div className="workspace">
           <section className="panel">
-            {activeStep === 0 && <MeetingStep data={meeting} onChange={setMeeting} reference={reference} />}
-            {activeStep === 1 && <DealStep data={deal} onChange={setDeal} reference={reference} />}
+            {activeStep === 0 && (
+              <MeetingStep data={meeting} onChange={setMeeting} reference={reference} sellerName={currentUser} />
+            )}
+            {activeStep === 1 && <DealStep data={deal} onChange={setDeal} reference={reference} sellerName={currentUser} />}
             {activeStep === 2 && (
-              <MediacleaningStep data={mediacleaning} onChange={setMediacleaning} reference={reference} />
+              <MediacleaningStep
+                data={mediacleaning}
+                onChange={setMediacleaning}
+                reference={reference}
+                sellerName={currentUser}
+              />
             )}
             {activeStep === 3 && (
               <ContractStep
                 data={contract}
                 onChange={setContract}
                 reference={reference}
+                sellerName={currentUser}
                 mediacleaningReady={mediacleaningStepSchema.safeParse(mediacleaning).success}
               />
             )}

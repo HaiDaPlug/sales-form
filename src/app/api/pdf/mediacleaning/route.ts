@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
       // warning on a completed run, not a failed run.
       status: attachment.warning ? "warning" : "success",
       createdBy: session.subject,
+      sellerOptionId: session.sellerOptionId,
       customerName: parsed.companyName,
       summary: `${parsed.documentTypes.join(", ")} för ${parsed.companyName} (${parsed.suppliers.length} leverantörer)`,
       fileName: pdf.fileName,

@@ -36,6 +36,17 @@ export type UserRef = {
   email?: string;
 };
 
+/**
+ * The logged-in seller, as every CRM write names them. Attached by the server
+ * from the session — no request body carries it, so a seller cannot act in a
+ * colleague's name.
+ */
+export type SellerIdentity = {
+  /** The option id on the custom deal field "Affärens säljare". */
+  optionId: CrmRecordId;
+  name: string;
+};
+
 export type WizardData = {
   meeting?: z.output<typeof meetingStepSchema>;
   deal?: z.output<typeof dealStepSchema>;

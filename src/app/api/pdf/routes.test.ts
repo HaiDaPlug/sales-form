@@ -9,7 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * second upload — and, for Mediacleaning, a second organization.
  */
 vi.mock("@/lib/auth/server", () => ({
-  requireSession: vi.fn(async () => ({ subject: "Roble" })),
+  requireSession: vi.fn(async () => ({ subject: "Roble", username: "roble", sellerOptionId: 73 })),
+  sellerFromSession: (session: { subject: string; sellerOptionId: number }) => ({
+    optionId: session.sellerOptionId,
+    name: session.subject
+  }),
   UnauthorizedError: class UnauthorizedError extends Error {}
 }));
 
@@ -52,7 +56,6 @@ const contractBody = {
     organizationNumber: "556677-8899",
     signerName: "Anna Andersson",
     address: "Storgatan 1",
-    sellerName: "Roble",
     price: 1200,
     paymentInterval: "monthly",
     bindingPeriodMonths: 12,
@@ -122,10 +125,12 @@ describe.each([
     expect(recordHistorySafely).toHaveBeenCalledWith(expect.objectContaining({ status: "warning" }));
   });
 
-  it("records a successful run as success", async () => {
+  it("records a successful run as success, scoped to the session's seller", async () => {
     await handler(request(body));
 
-    expect(recordHistorySafely).toHaveBeenCalledWith(expect.objectContaining({ status: "success" }));
+    expect(recordHistorySafely).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "success", createdBy: "Roble", sellerOptionId: 73 })
+    );
   });
 
   it("rejects an invalid submission before generating anything", async () => {
