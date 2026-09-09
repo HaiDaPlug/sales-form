@@ -562,6 +562,46 @@ textarea:disabled {
 }
 
 /* =============================================================================
+   Status page
+   ========================================================================== */
+
+.customer-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.customer-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+}
+
+.customer-name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.customer-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* The status page stacks several panels; give them breathing room. */
+.history-page .panel + .panel {
+  margin-top: 18px;
+}
+
+/* =============================================================================
    Chosen suppliers
 
    One card per supplier on the cancellation, showing the details the letter

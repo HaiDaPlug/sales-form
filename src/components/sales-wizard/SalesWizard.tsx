@@ -578,6 +578,9 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
           <span className="sidebar-user" title={currentUser}>
             {currentUser}
           </span>
+          <a className="link-button" href="/status">
+            Status
+          </a>
           <button className="link-button" type="button" onClick={logout}>
             Logga ut
           </button>

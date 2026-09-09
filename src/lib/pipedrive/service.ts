@@ -327,6 +327,56 @@ export async function getLead(leadId: string) {
   return pipedriveRequest<AnyRecord>(`/leads/${encodeURIComponent(leadId)}`);
 }
 
+/** Pipedrive pages at 500; a seller's own book is far smaller than that. */
+const LIST_PAGE_SIZE = 500;
+const MAX_PAGES = 10;
+
+/**
+ * Every lead the account holds, active or archived.
+ *
+ * A converted lead disappears from the default listing, so the archived ones
+ * are fetched too: that is how a prospect that has become a deal — or been
+ * shelved — still shows up on the seller's status page rather than vanishing.
+ */
+export async function listLeads(archived: boolean): Promise<AnyRecord[]> {
+  const collected: AnyRecord[] = [];
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const batch = await pipedriveRequest<AnyRecord[]>("/leads", {
+      query: {
+        archived_status: archived ? "archived" : "not_archived",
+        limit: LIST_PAGE_SIZE,
+        start: page * LIST_PAGE_SIZE
+      }
+    });
+
+    if (!batch || batch.length === 0) break;
+
+    collected.push(...batch);
+
+    if (batch.length < LIST_PAGE_SIZE) break;
+  }
+
+  return collected;
+}
+
+/**
+ * Every deal, with `source_lead_id` so a converted prospect can be matched to
+ * the deal it became. That field only exists on the v2 API and only when it is
+ * asked for by name.
+ */
+export async function listDealsWithSourceLead(): Promise<AnyRecord[]> {
+  const deals = await pipedriveRequest<AnyRecord[]>("/deals", {
+    version: "v2",
+    query: { include_fields: "source_lead_id", limit: LIST_PAGE_SIZE }
+  });
+
+  // One page. v2 pages by an opaque cursor that this client's response
+  // unwrapping discards, and 500 deals is well past what one seller's status
+  // page shows; a larger account needs the cursor plumbed through first.
+  return deals ?? [];
+}
+
 /**
  * Prospect search, for linking documents to an existing prospect. Only the v2
  * API searches leads, hence the version switch.
