@@ -65,11 +65,11 @@ function contract(overrides: Record<string, unknown> = {}) {
     organizationNumber: "556677-8899",
     signerName: "Anna Andersson",
     address: "Storgatan 1",
-    sellerName: "Roble",
     price: 1200,
     paymentInterval: "monthly",
     bindingPeriodMonths: 12,
     includedServices: ["Digital Kontakt"],
+    organizationId: 7,
     ...overrides
   };
 }
@@ -413,6 +413,19 @@ describe("contractStepSchema (S25)", () => {
     const result = contractStepSchema.parse(contract());
 
     expect(result.includeMediacleaningDocuments).toBe(false);
+  });
+
+  /**
+   * The contract is uploaded to the customer's organization, which is where it
+   * is sent for signature from, so a contract with no customer record has
+   * nowhere to go.
+   */
+  it("requires the customer's organization", () => {
+    expect(contractStepSchema.safeParse(contract({ organizationId: undefined })).success).toBe(false);
+  });
+
+  it("requires a firmatecknare", () => {
+    expect(contractStepSchema.safeParse(contract({ signerName: "" })).success).toBe(false);
   });
 });
 

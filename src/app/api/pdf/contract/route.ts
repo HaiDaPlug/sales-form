@@ -12,6 +12,7 @@ import {
   generateMediacleaningPdf
 } from "@/lib/pdf/service";
 import { attachDocument, attachmentHeaders } from "@/lib/pipedrive/attachment";
+import { requestSignatureTask } from "@/lib/pipedrive/service";
 
 export async function POST(request: NextRequest) {
   /** Set once the document exists; from then on the request must succeed. */
@@ -39,15 +40,36 @@ export async function POST(request: NextRequest) {
       .filter(Boolean)
       .join("\n\n");
 
-    // Deal first, organization otherwise (S22/S23). Contract generation never
-    // creates a deal, and never creates an organization either — the seller
-    // must have selected one.
+    // The file goes to the organization — that is where it is sent for
+    // signature from — and the note to the prospect. Contract generation never
+    // creates a deal, and never creates an organization: the seller selects one.
     const attachment = await attachDocument({
+      leadId: contract.leadId,
       dealId: contract.dealId,
       organizationId: contract.organizationId,
       document: pdf,
       noteContent
     });
+
+    // Only once the contract is actually filed under the customer is there
+    // anything for the back-office to send.
+    let signatureTaskWarning: string | undefined;
+
+    if (attachment.fileId !== undefined && attachment.organizationId !== undefined) {
+      try {
+        await requestSignatureTask({
+          organizationId: attachment.organizationId,
+          leadId: contract.leadId,
+          companyName: contract.companyName,
+          fileName: pdf.fileName,
+          seller
+        });
+      } catch (error) {
+        signatureTaskWarning =
+          "Avtalet är uppladdat, men uppgiften om att skicka det för signering kunde inte skapas i Pipedrive.";
+        console.error("Signature task could not be created:", error);
+      }
+    }
 
     // The document itself is returned so the seller actually receives it; the
     // filename travels in a header because the body is now the file.
@@ -63,7 +85,8 @@ export async function POST(request: NextRequest) {
         "Content-Disposition": `attachment; filename="${pdf.fileName}"`,
         "X-Document-File-Name": pdf.fileName,
         "X-Document-Draft": "true",
-        ...attachmentHeaders(attachment)
+        ...attachmentHeaders(attachment),
+        ...(signatureTaskWarning ? { "X-Signature-Task-Warning": encodeURIComponent(signatureTaskWarning) } : {})
       }
     });
 
@@ -71,7 +94,7 @@ export async function POST(request: NextRequest) {
       kind: "contract",
       // The PDF was generated and returned; a failed CRM attachment is a
       // warning on a completed run, not a failed run.
-      status: attachment.warning ? "warning" : "success",
+      status: attachment.warning || signatureTaskWarning ? "warning" : "success",
       createdBy: session.subject,
       sellerOptionId: session.sellerOptionId,
       customerName: contract.companyName,
@@ -79,9 +102,10 @@ export async function POST(request: NextRequest) {
         contract.includeMediacleaningDocuments ? " + Mediacleaning" : ""
       }`,
       fileName: pdf.fileName,
+      pipedriveLeadId: contract.leadId,
       pipedriveDealId: contract.dealId,
-      pipedriveOrganizationId: contract.organizationId,
-      errorMessage: attachment.warning,
+      pipedriveOrganizationId: attachment.organizationId ?? contract.organizationId,
+      errorMessage: [attachment.warning, signatureTaskWarning].filter(Boolean).join(" ") || undefined,
       payload: parsed
     });
   } catch (error) {

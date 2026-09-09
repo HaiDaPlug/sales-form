@@ -149,7 +149,8 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
         organizationNumber: current.organizationNumber || prospect.organization.organizationNumber || "",
         address: current.address || prospect.organization.address || meeting.organization?.address || "",
         city: current.city || prospect.organization.city || meeting.organization?.city || "",
-        organizationId: current.organizationId || String(prospect.organization.id ?? meeting.organization?.id ?? "")
+        organizationId: current.organizationId || String(prospect.organization.id ?? meeting.organization?.id ?? ""),
+        leadId: current.leadId || createdLeadId || ""
       }));
     }
 
@@ -164,6 +165,8 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
         price: current.price || prospect.monthlyCost || prospect.value || 0,
         bindingPeriodMonths: current.bindingPeriodMonths || prospect.bindingPeriodMonths || 12,
         organizationId: current.organizationId || String(prospect.organization.id ?? mediacleaning.organizationId ?? ""),
+        // The prospect this session created is the one the contract belongs to.
+        leadId: current.leadId || createdLeadId || String(mediacleaning.leadId ?? ""),
         dealId: current.dealId || String(mediacleaning.dealId ?? "")
       }));
     }
@@ -512,10 +515,12 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
     // The document exists either way; the attachment is reported separately so
     // a CRM failure does not read as a failure to produce the document.
-    const warning = response.headers.get("X-Attachment-Warning");
+    const warnings = [response.headers.get("X-Attachment-Warning"), response.headers.get("X-Signature-Task-Warning")]
+      .filter((value): value is string => Boolean(value))
+      .map(decodeURIComponent);
 
-    if (warning) {
-      return `Utkast skapat och nedladdat: ${fileName}. ${decodeURIComponent(warning)}`;
+    if (warnings.length > 0) {
+      return `Utkast skapat och nedladdat: ${fileName}. ${warnings.join(" ")}`;
     }
 
     return `Utkast skapat och nedladdat: ${fileName} (${describeAttachment(
@@ -742,10 +747,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 }
 
 function describeAttachment(target: string | null): string {
-  if (target === "deal") return "kopplat till affären";
-  if (target === "organization") return "kopplat till organisationen";
-
-  return "endast nedladdat";
+  return target === "organization" ? "uppladdat till organisationen" : "endast nedladdat";
 }
 
 function formatTimestamp(value: string) {

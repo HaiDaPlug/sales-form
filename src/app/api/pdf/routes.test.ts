@@ -24,11 +24,16 @@ vi.mock("@/lib/history/store", () => ({
 
 vi.mock("@/lib/pipedrive/attachment", () => ({
   attachDocument: vi.fn(),
-  attachmentHeaders: vi.fn(() => ({ "X-Attachment-Target": "deal" }))
+  attachmentHeaders: vi.fn(() => ({ "X-Attachment-Target": "organization" }))
+}));
+
+vi.mock("@/lib/pipedrive/service", () => ({
+  requestSignatureTask: vi.fn()
 }));
 
 const { recordHistorySafely } = await import("@/lib/history/store");
 const { attachDocument } = await import("@/lib/pipedrive/attachment");
+const { requestSignatureTask } = await import("@/lib/pipedrive/service");
 const { POST: mediacleaningPost } = await import("@/app/api/pdf/mediacleaning/route");
 const { POST: contractPost } = await import("@/app/api/pdf/contract/route");
 
@@ -62,12 +67,14 @@ const contractBody = {
     paymentInterval: "monthly",
     bindingPeriodMonths: 12,
     includedServices: ["Digital Kontakt"],
-    dealId: 42
+    organizationId: 7,
+    leadId: "lead-1"
   }
 };
 
 beforeEach(() => {
   vi.mocked(recordHistorySafely).mockReset().mockResolvedValue(undefined);
+  vi.mocked(requestSignatureTask).mockReset().mockResolvedValue({});
   vi.mocked(attachDocument)
     .mockReset()
     .mockResolvedValue({ organizationId: 7, noteTarget: { kind: "lead", leadId: "lead-1" }, fileId: 800, noteId: 900 });

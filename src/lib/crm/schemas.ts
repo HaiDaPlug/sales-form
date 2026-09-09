@@ -4,6 +4,11 @@ import { IDENTITY_NUMBER_MESSAGE, normalizeIdentityNumber } from "@/lib/crm/iden
 const requiredText = (label: string) => z.string().trim().min(1, `${label} krävs`);
 const optionalText = z.string().trim().optional();
 const recordId = z.union([z.string(), z.number()]);
+/** The `errorMap` keeps a missing value from falling back to Zod's English "Invalid input". */
+const requiredRecordId = (label: string) =>
+  z.union([z.string().trim().min(1, `${label} krävs`), z.number()], {
+    errorMap: () => ({ message: `${label} krävs` })
+  });
 
 /**
  * ISO calendar date, e.g. 2026-08-03. Guards against free text reaching
@@ -293,6 +298,8 @@ export const mediacleaningStepSchema = z
 export const contractStepSchema = z.object({
   companyName: requiredText("Företagsnamn"),
   organizationNumber,
+  /** Chosen from the organization's people, like the Mediacleaning signatory. */
+  signerPersonId: recordId.optional(),
   signerName: requiredText("Firmatecknare/kontaktperson"),
   address: requiredText("Adress"),
   // The seller printed on the contract is the logged-in seller, attached by
@@ -303,7 +310,14 @@ export const contractStepSchema = z.object({
   includedServices: z.array(requiredText("Tjänst")).min(1, "Ange minst en tjänst"),
   /** Only combines documents when the seller explicitly asks for it (5.4). */
   includeMediacleaningDocuments: z.boolean().default(false),
-  organizationId: recordId.optional(),
+  /**
+   * The organization the contract is filed under. Required: the document is
+   * sent for signature from the customer's own page in Pipedrive, so it has
+   * to be there.
+   */
+  organizationId: requiredRecordId("Organisation"),
+  /** The prospect the contract belongs to; its note lands there. */
+  leadId: optionalText,
   dealId: recordId.optional()
 });
 

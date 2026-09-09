@@ -1231,6 +1231,42 @@ export async function buildLeadPayload(
 }
 
 /**
+ * Asks the back-office to send a generated contract for signature.
+ *
+ * The sellers have no Pipedrive login and Smart Docs has no public API, so the
+ * portal cannot send the document itself. It uploads the PDF to the customer's
+ * organization and leaves this task for the person who can: they send it, then
+ * set the prospect's status. The portal never writes "Väntar på signering" —
+ * claiming a document had been sent when nobody had sent it would be worse
+ * than leaving the status behind.
+ */
+export async function requestSignatureTask(input: {
+  organizationId: CrmRecordId;
+  leadId?: string;
+  companyName: string;
+  fileName: string;
+  seller: SellerIdentity;
+}) {
+  const config = getPipedriveConfig();
+  const today = new Date().toISOString().slice(0, 10);
+
+  return createActivity({
+    subject: `Skicka avtal för signering: ${input.companyName}`,
+    type: "task",
+    due_date: today,
+    org_id: input.organizationId,
+    lead_id: input.leadId,
+    user_id: config.leadOwnerUserId,
+    note: [
+      `Avtalet ${input.fileName} är uppladdat på organisationen och ska skickas för signering med smart doc.`,
+      `Säljare: ${input.seller.name}`,
+      "När avtalet är skickat: sätt Underlag till \"Väntar på signering\" på prospektet.",
+      "När kunden har signerat: sätt Underlag till \"Avtal signerat\" och kvalitetskontrollera försäljningen."
+    ].join("\n")
+  });
+}
+
+/**
  * The commercial terms that have no Pipedrive field, written as a note on the
  * prospect so the person doing quality control sees them next to the evidence.
  */
