@@ -1,12 +1,13 @@
-import { assertCustomFieldMappings, getPipedriveConfig } from "@/lib/config/pipedrive";
+import { assertCustomFieldMappings, ConfigurationError, getPipedriveConfig } from "@/lib/config/pipedrive";
 import type { CrmRecordId, SellerIdentity } from "@/lib/crm/types";
-import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
+import type { MeetingStepInput, ProspectStepInput } from "@/lib/crm/schemas";
+import { prospectTitle, UNDERLAG_LABELS, type PortalUpdatableUnderlag, type UnderlagStatus } from "@/lib/crm/prospect";
 import { PipedriveApiError, pipedriveRequest } from "@/lib/pipedrive/client";
 import type {
   MeetingOverlap,
   PipedriveActivityPayload,
-  PipedriveDealPayload,
   PipedriveFilePayload,
+  PipedriveLeadPayload,
   PipedriveNotePayload,
   PipedriveOrganizationPayload,
   PipedrivePersonPayload,
@@ -114,12 +115,12 @@ export type OrganizationDetails = {
  * Every creation path goes through this, so identity cannot reach Pipedrive
  * from one workflow and be dropped by another. Previously each caller passed
  * `{ name, address }` inline and the organisationsnummer — mandatory on the
- * deal form, and the strongest deduplication key the scenarios have — was
+ * prospect form, and the strongest deduplication key the scenarios have — was
  * never stored at all.
  *
  * An unmapped custom field is skipped rather than fatal. These keys are
  * account-specific, and a deployment that has not configured them must still
- * be able to book meetings and create deals.
+ * be able to book meetings.
  */
 export function buildOrganizationPayload(details: OrganizationDetails): PipedriveOrganizationPayload {
   const fields = getPipedriveConfig().organizationFields;
@@ -153,6 +154,11 @@ function assignOrganizationField(
   }
 }
 
+/* -----------------------------------------------------------------------------
+   Deals — read-only. Mediacleaning may attach to an existing deal; nothing here
+   creates one, and nothing ever will: that is the back-office's act in Pipedrive.
+   -------------------------------------------------------------------------- */
+
 export async function searchDeals(
   term: string,
   personId?: CrmRecordId,
@@ -181,13 +187,6 @@ export async function searchDeals(
       organizationId: organization ? asRecordId(organization.id) : undefined,
       organizationName: organization ? asString(organization.name) : undefined
     };
-  });
-}
-
-export async function createDeal(payload: PipedriveDealPayload) {
-  return pipedriveRequest<AnyRecord>("/deals", {
-    method: "POST",
-    body: payload
   });
 }
 
@@ -237,6 +236,94 @@ function readOrganizationId(deal: AnyRecord | null | undefined): CrmRecordId | u
   return readId(asRecord(orgId));
 }
 
+/* -----------------------------------------------------------------------------
+   Leads — the portal's prospects.
+   -------------------------------------------------------------------------- */
+
+export async function createLead(payload: PipedriveLeadPayload) {
+  return pipedriveRequest<AnyRecord>("/leads", {
+    method: "POST",
+    body: payload
+  });
+}
+
+/** One lead, with the custom fields the account has set on it. */
+export async function getLead(leadId: string) {
+  return pipedriveRequest<AnyRecord>(`/leads/${encodeURIComponent(leadId)}`);
+}
+
+/**
+ * Prospect search, for linking documents to an existing prospect. Only the v2
+ * API searches leads, hence the version switch.
+ */
+export async function searchLeads(term: string, organizationId?: CrmRecordId): Promise<SearchHit[]> {
+  const envelope = await pipedriveRequest<PipedriveSearchEnvelope>("/leads/search", {
+    version: "v2",
+    query: { term, organization_id: organizationId, limit: MAX_SEARCH_RESULTS }
+  });
+
+  return readSearchItems(envelope).map((item) => {
+    const organization = asRecord(item.organization);
+    const person = asRecord(item.person);
+    const detail = [organization ? asString(organization.name) : undefined, person ? asString(person.name) : undefined]
+      .filter(Boolean)
+      .join(" · ");
+
+    return {
+      id: asRecordId(item.id),
+      name: asString(item.title) ?? "Namnlöst prospekt",
+      detail: detail || undefined,
+      organizationId: organization ? asRecordId(organization.id) : undefined,
+      organizationName: organization ? asString(organization.name) : undefined
+    };
+  });
+}
+
+/**
+ * Advances a prospect's "Underlag" after a portal action has completed.
+ *
+ * The only update the portal ever makes to an existing record, and the type
+ * of `status` is what limits it: "Ljudfil uppladdad" is the one value that
+ * follows from something the portal itself did. "Väntar på signering" and
+ * "Avtal signerat" describe things that happen in Pipedrive, so a person
+ * records them there.
+ */
+export async function setLeadUnderlag(leadId: string, status: PortalUpdatableUnderlag) {
+  const config = getPipedriveConfig();
+  const fieldKey = config.customFields.underlag;
+
+  if (!fieldKey) {
+    throw new ConfigurationError("Fältet Underlag är inte mappat (PIPEDRIVE_FIELD_UNDERLAG).");
+  }
+
+  const optionId = await resolveEnumOptionId(fieldKey, "Underlag", UNDERLAG_LABELS[status]);
+
+  return pipedriveRequest<AnyRecord>(`/leads/${encodeURIComponent(leadId)}`, {
+    method: "PATCH",
+    body: { [fieldKey]: optionId }
+  });
+}
+
+/**
+ * Reads the "Underlag" value off a lead or deal record and names it. Returns
+ * undefined when the field is unmapped, unset, or holds an option this code
+ * does not know — the status page shows "okänt" rather than guessing.
+ */
+export async function readUnderlagStatus(record: AnyRecord): Promise<UnderlagStatus | undefined> {
+  const fieldKey = getPipedriveConfig().customFields.underlag;
+  if (!fieldKey) return undefined;
+
+  const raw = record[fieldKey];
+  if (raw === undefined || raw === null || raw === "") return undefined;
+
+  const label = await resolveEnumOptionLabel(fieldKey, asRecordId(raw));
+  if (!label) return undefined;
+
+  return (Object.keys(UNDERLAG_LABELS) as UnderlagStatus[]).find((status) =>
+    sameLabel(UNDERLAG_LABELS[status], label)
+  );
+}
+
 export async function createActivity(payload: PipedriveActivityPayload) {
   return pipedriveRequest<AnyRecord>("/activities", {
     method: "POST",
@@ -252,10 +339,10 @@ export async function createNote(payload: PipedriveNotePayload) {
 }
 
 /**
- * Uploads a generated document, attached to a deal or an organization.
+ * Uploads a document or recording, attached to the records given.
  *
- * Called server-side by `attachDocument` rather than through a route: the file
- * is produced in the same request, so it never has to cross an HTTP boundary as
+ * Called server-side rather than through a route: the file is produced or
+ * fetched in the same request, so it never has to cross an HTTP boundary as
  * JSON — which is what made the former passthrough route impossible (a Blob
  * does not survive JSON.stringify).
  */
@@ -263,6 +350,7 @@ export async function uploadFile(payload: PipedriveFilePayload) {
   const formData = new FormData();
   formData.set("file", payload.file, payload.fileName);
 
+  if (payload.leadId) formData.set("lead_id", payload.leadId);
   if (payload.dealId) formData.set("deal_id", String(payload.dealId));
   if (payload.personId) formData.set("person_id", String(payload.personId));
   if (payload.organizationId) formData.set("org_id", String(payload.organizationId));
@@ -303,83 +391,94 @@ export async function getUsers(): Promise<ReferenceOption[]> {
     .sort((a, b) => a.name.localeCompare(b.name, "sv"));
 }
 
+/* -----------------------------------------------------------------------------
+   Enum custom fields.
+
+   Pipedrive stores an enum value as the numeric option id, never the label, and
+   each field has its own option ids — "Ursprunglig säljare" and "Affärens
+   säljare" list the same four names under different ids. Everything that writes
+   or reads one of these fields goes through the label so the account, not the
+   code, is the source of truth for the ids.
+   -------------------------------------------------------------------------- */
+
+export type EnumOption = { id: CrmRecordId; label: string };
+
 /**
- * The sellers assignable to a deal.
+ * `/dealFields` describes every field and is fetched for each label lookup a
+ * prospect needs. Caching it briefly keeps one prospect at one request; the
+ * short life means an option renamed in Pipedrive shows up without a redeploy.
+ */
+const DEAL_FIELDS_TTL_MS = 5 * 60 * 1000;
+
+let dealFieldsCache: { fetchedAt: number; fields: AnyRecord[] } | undefined;
+
+async function readDealFields(): Promise<AnyRecord[]> {
+  if (dealFieldsCache && Date.now() - dealFieldsCache.fetchedAt < DEAL_FIELDS_TTL_MS) {
+    return dealFieldsCache.fields;
+  }
+
+  const fields = (await pipedriveRequest<AnyRecord[]>("/dealFields")) ?? [];
+  dealFieldsCache = { fetchedAt: Date.now(), fields };
+
+  return fields;
+}
+
+/** Test seam, and the way a changed field is picked up before the TTL ends. */
+export function resetDealFieldsCache() {
+  dealFieldsCache = undefined;
+}
+
+export async function getEnumOptions(fieldKey: string): Promise<EnumOption[]> {
+  const fields = await readDealFields();
+  const field = fields.find((candidate) => candidate.key === fieldKey);
+  const options = Array.isArray(field?.options) ? field.options : [];
+
+  return options.flatMap((option) => {
+    const record = asRecord(option);
+    const label = asString(record?.label);
+    const id = record?.id;
+
+    return label && (typeof id === "number" || typeof id === "string") ? [{ id, label }] : [];
+  });
+}
+
+/** Throws a configuration error naming the option an administrator has to add. */
+export async function resolveEnumOptionId(fieldKey: string, fieldName: string, label: string): Promise<CrmRecordId> {
+  const match = (await getEnumOptions(fieldKey)).find((option) => sameLabel(option.label, label));
+
+  if (!match) {
+    throw new ConfigurationError(
+      `Fältet "${fieldName}" i Pipedrive saknar alternativet "${label}". Lägg till det i Pipedrive och försök igen.`
+    );
+  }
+
+  return match.id;
+}
+
+export async function resolveEnumOptionLabel(fieldKey: string, optionId: CrmRecordId): Promise<string | undefined> {
+  return (await getEnumOptions(fieldKey)).find((option) => String(option.id) === String(optionId))?.label;
+}
+
+function sameLabel(left: string, right: string): boolean {
+  return left.trim().toLocaleLowerCase("sv") === right.trim().toLocaleLowerCase("sv");
+}
+
+/**
+ * The sellers a prospect can be assigned to.
  *
  * These are the options of the "Affärens säljare" custom deal field, not
  * Pipedrive user accounts — the four sellers have no login of their own, so
  * `/users` does not and will never list them. Reading the options live means
- * editing them in Pipedrive updates the dropdown without a redeploy.
+ * editing them in Pipedrive updates the portal without a redeploy.
  *
  * Returns an empty list when the field key is unconfigured or the field has
- * since been deleted, which the UI degrades into a free-text input rather than
- * an empty dropdown.
+ * since been deleted.
  */
 export async function getSellers(): Promise<ReferenceOption[]> {
   const fieldKey = getPipedriveConfig().customFields.affarensSaljare;
   if (!fieldKey) return [];
 
-  const fields = await pipedriveRequest<AnyRecord[]>("/dealFields");
-  const field = (fields ?? []).find((candidate) => candidate.key === fieldKey);
-  const options = Array.isArray(field?.options) ? field.options : [];
-
-  return options.map((option) => {
-    const record = asRecord(option);
-
-    return {
-      // Pipedrive stores an enum's value as the numeric option id, so that —
-      // not the label — is what the deal payload has to carry.
-      id: asRecordId(record?.id),
-      name: asString(record?.label) ?? "Namnlös säljare"
-    };
-  });
-}
-
-export async function getPipelines(): Promise<ReferenceOption[]> {
-  const pipelines = await pipedriveRequest<AnyRecord[]>("/pipelines");
-
-  return (pipelines ?? [])
-    .filter((pipeline) => pipeline.active !== false)
-    .map((pipeline) => ({ id: asRecordId(pipeline.id), name: asString(pipeline.name) ?? "Namnlös pipeline" }));
-}
-
-/**
- * Stages keep their `pipelineId` so the UI can filter by the selected pipeline
- * without a second request, and are ordered by Pipedrive's own `order_nr`.
- */
-export async function getStages(pipelineId?: CrmRecordId): Promise<ReferenceOption[]> {
-  const stages = await pipedriveRequest<AnyRecord[]>("/stages", {
-    query: { pipeline_id: pipelineId }
-  });
-
-  return (stages ?? [])
-    .filter((stage) => stage.active_flag !== false)
-    // `order_nr` restarts per pipeline, so group by pipeline before ordering —
-    // a flat sort interleaves stages from different pipelines.
-    .sort((a, b) => {
-      const byPipeline = Number(a.pipeline_id ?? 0) - Number(b.pipeline_id ?? 0);
-      return byPipeline !== 0 ? byPipeline : Number(a.order_nr ?? 0) - Number(b.order_nr ?? 0);
-    })
-    .map((stage) => ({
-      id: asRecordId(stage.id),
-      name: asString(stage.name) ?? "Namnlöst steg",
-      pipelineId: asRecordId(stage.pipeline_id)
-    }));
-}
-
-/**
- * The stage a deal lands in when the seller picked a pipeline but no stage.
- *
- * Resolves the pipeline's own first stage rather than falling back to a global
- * default, which would drop the deal into an unrelated pipeline's stage. Returns
- * `undefined` if the pipeline has no stages, letting Pipedrive apply its own
- * default rather than failing the deal over a cosmetic field.
- */
-export async function resolveFirstStageId(pipelineId: CrmRecordId): Promise<CrmRecordId | undefined> {
-  const stages = await getStages(pipelineId);
-
-  // `getStages` already orders by `order_nr` within a pipeline.
-  return stages.find((stage) => String(stage.pipelineId) === String(pipelineId))?.id ?? stages[0]?.id;
+  return (await getEnumOptions(fieldKey)).map((option) => ({ id: option.id, name: option.label }));
 }
 
 export function getCustomFieldMappings() {
@@ -397,6 +496,10 @@ export async function getPersonFields() {
 export async function getOrganizationFields() {
   return pipedriveRequest<AnyRecord[]>("/organizationFields");
 }
+
+/* -----------------------------------------------------------------------------
+   Meeting times.
+   -------------------------------------------------------------------------- */
 
 const STOCKHOLM_TIME_ZONE = "Europe/Stockholm";
 
@@ -636,7 +739,11 @@ export function buildMeetingActivityPayload(
   };
 }
 
-export type ResolvedDealParties = {
+/* -----------------------------------------------------------------------------
+   Parties — the person and organization a record is attached to.
+   -------------------------------------------------------------------------- */
+
+export type ResolvedProspectParties = {
   personId: CrmRecordId;
   organizationId: CrmRecordId;
   createdPerson: boolean;
@@ -647,9 +754,9 @@ export type ResolvedDealParties = {
 /**
  * A meeting's contact and, when the seller supplied one, its organization.
  *
- * `organizationId` is optional here and required on a deal: a meeting may be
- * booked from contact details alone (S01), while a deal always belongs to a
- * customer record.
+ * `organizationId` is optional here and required on a prospect: a meeting may
+ * be booked from contact details alone (S01), while a prospect always belongs
+ * to a customer record.
  */
 export type ResolvedMeetingParties = {
   personId: CrmRecordId;
@@ -673,7 +780,7 @@ export type ResolvedMeetingParties = {
 export async function resolveMeetingParties(data: MeetingStepInput): Promise<ResolvedMeetingParties> {
   const organizationName = data.organization?.name?.trim();
 
-  // Same protection as the deal path: reassigning an existing contact to a
+  // Same protection as the prospect path: reassigning an existing contact to a
   // different organization is an edit to a record this app does not own.
   if (
     data.person.id &&
@@ -739,7 +846,6 @@ export async function resolveMeetingParties(data: MeetingStepInput): Promise<Res
   return { personId, organizationId, createdPerson, createdOrganization };
 }
 
-/** Existing CRM records are read-only from this application. */
 /** Records created before a resolution failed, so a retry can reuse them. */
 export type PartialParties = {
   personId?: CrmRecordId;
@@ -768,6 +874,7 @@ export class PartialResolutionError extends Error {
   }
 }
 
+/** Existing CRM records are read-only from this application. */
 export class ExistingRecordProtectionError extends Error {
   readonly status = 409;
 
@@ -778,17 +885,17 @@ export class ExistingRecordProtectionError extends Error {
 }
 
 /**
- * Guarantees a deal is attached to a real person and organization.
+ * Guarantees a prospect is attached to a real person and organization.
  *
  * Selected records are reused; anything without an ID is created first, then
- * the person is linked to the organization. Without this the deal payload sent
- * `person_id: undefined`, because nothing in the UI ever created a person —
- * every deal was orphaned from its contact and company.
+ * the person is linked to the organization. Without this the lead payload
+ * would send `person_id: undefined` for a new contact and the prospect would
+ * be orphaned from its customer.
  *
  * Organization first: the person is created already carrying `org_id`, which
  * avoids a follow-up link call in the common "both are new" path.
  */
-export async function resolveDealParties(data: DealStepInput): Promise<ResolvedDealParties> {
+export async function resolveProspectParties(data: ProspectStepInput): Promise<ResolvedProspectParties> {
   // Refuse before creating anything. Reassigning an existing contact would be
   // a broad edit to a CRM record the app does not own.
   if (
@@ -862,50 +969,96 @@ function readId(record: AnyRecord | null | undefined): CrmRecordId | undefined {
 }
 
 /**
- * `parties` carries the IDs guaranteed by `resolveDealParties`. They are passed
- * in rather than read from `data`, so the payload cannot be built with the
- * undefined form IDs that previously orphaned every deal.
+ * The lead a prospect becomes.
+ *
+ * `parties` carries the IDs guaranteed by `resolveProspectParties`; they are
+ * passed in rather than read from `data` so the payload cannot be built with
+ * undefined form IDs. `seller` comes from the session: it is written to
+ * "Affärens säljare" (the assignment an administrator may later change) and
+ * to "Ursprunglig säljare" (which nobody changes).
  */
-export async function buildDealPayload(
-  data: DealStepInput,
-  parties: ResolvedDealParties
-): Promise<PipedriveDealPayload> {
+export async function buildLeadPayload(
+  data: ProspectStepInput,
+  parties: ResolvedProspectParties,
+  seller: SellerIdentity
+): Promise<PipedriveLeadPayload> {
   const config = getPipedriveConfig();
 
-  // Commercial terms live in custom fields. A missing key would drop them
-  // silently, so refuse to build the payload at all.
+  // Every custom field below is load-bearing for QC or assignment. A missing
+  // key would drop the value silently, so refuse to build the payload at all.
   assertCustomFieldMappings(config);
 
-  const customFields = config.customFields;
-  const pipelineId = data.deal.pipelineId ?? config.defaultPipelineId;
+  const fields = config.customFields as Required<typeof config.customFields>;
 
-  // With a pipeline chosen but no stage, the deal goes to that pipeline's first
-  // stage. A stage from the configured default could belong to another pipeline.
-  const stageId = data.deal.stageId ?? (pipelineId ? await resolveFirstStageId(pipelineId) : config.defaultStageId);
-
-  const payload: PipedriveDealPayload = {
-    title: data.deal.title,
+  const payload: PipedriveLeadPayload = {
+    title: prospectTitle(data.organization.name),
     person_id: parties.personId,
-    org_id: parties.organizationId,
-    // No `user_id`: the seller is an option on the "Affärens säljare" custom
-    // field below, not a Pipedrive user. Sending an option id here was rejected
-    // as an unknown user, and the four sellers have no account to own the deal.
-    value: data.deal.value,
-    currency: data.deal.currency ?? config.defaultCurrency,
-    pipeline_id: pipelineId,
-    stage_id: stageId
+    organization_id: parties.organizationId
   };
 
-  // Only the invoicing fields exist as custom fields in the account. The
-  // contract terms the wizard also collects (bindningstid, månadskostnad,
-  // startavgift, …) have no field to write to and belong to the contract
-  // document — they are intentionally not sent here.
-  assignCustomField(payload, customFields.viktigastForKunden, data.viktigastForKunden);
-  assignCustomField(payload, customFields.fakturaStart, data.fakturaStart);
-  assignCustomField(payload, customFields.fakturagrupp, data.fakturagrupp);
-  assignCustomField(payload, customFields.affarensSaljare, data.sellerId);
+  // The owner is a Pipedrive user — the back-office inbox — never the seller,
+  // who has no user account. Left out, Pipedrive assigns the token's user.
+  if (config.leadOwnerUserId !== undefined) payload.owner_id = config.leadOwnerUserId;
+
+  if (data.value > 0) {
+    payload.value = { amount: data.value, currency: data.currency ?? config.defaultCurrency };
+  }
+
+  payload[fields.viktigastForKunden] = data.viktigastForKunden;
+  payload[fields.fakturaStart] = data.fakturaAvtalStart;
+  payload[fields.fakturagrupp] = data.fakturagrupp;
+  payload[fields.affarensSaljare] = seller.optionId;
+
+  // "Ursprunglig säljare" has its own option ids for the same four names, so
+  // the session's option is mapped through its label rather than copied.
+  const sellerLabel = (await resolveEnumOptionLabel(fields.affarensSaljare, seller.optionId)) ?? seller.name;
+  payload[fields.ursprungligSaljare] = await resolveEnumOptionId(
+    fields.ursprungligSaljare,
+    "Ursprunglig säljare",
+    sellerLabel
+  );
+
+  // Audio starts with no status at all: "Ljudfil uppladdad" is written only
+  // once Pipedrive has the file. A signature sale is a known state from the
+  // moment it exists.
+  if (data.evidenceMethod === "signature") {
+    payload[fields.underlag] = await resolveEnumOptionId(
+      fields.underlag,
+      "Underlag",
+      UNDERLAG_LABELS.signatureRequired
+    );
+  }
 
   return payload;
+}
+
+/**
+ * The commercial terms that have no Pipedrive field, written as a note on the
+ * prospect so the person doing quality control sees them next to the evidence.
+ */
+export function buildProspectNote(data: ProspectStepInput, seller: SellerIdentity): string {
+  const currency = data.currency ?? "SEK";
+  const money = (amount: number | undefined) =>
+    amount === undefined ? undefined : `${new Intl.NumberFormat("sv-SE").format(amount)} ${currency}`;
+  const months = (count: number | undefined) => (count === undefined ? undefined : `${count} månader`);
+
+  const lines: Array<[string, string | undefined]> = [
+    ["Säljare", seller.name],
+    ["Underlag", data.evidenceMethod === "audio" ? "Ljudfil (kvalitetskontroll)" : "Digital signering"],
+    ["Faktura/avtal start", data.fakturaAvtalStart],
+    ["Fakturagrupp", data.fakturagrupp],
+    ["Avtalslängd", months(data.contractLengthMonths)],
+    ["Bindningstid", months(data.bindingPeriodMonths)],
+    ["Månadskostnad", money(data.monthlyCost)],
+    ["Startavgift", money(data.startFee)],
+    ["Totalt affärsvärde", money(data.totalDealValue)],
+    ["Viktigast för kunden", data.viktigastForKunden]
+  ];
+
+  return [
+    "Prospekt skapat via säljportalen",
+    ...lines.filter(([, value]) => value !== undefined && value !== "").map(([label, value]) => `${label}: ${value}`)
+  ].join("\n");
 }
 
 /* Search envelope parsing. Pipedrive's shapes are loosely typed, so every
@@ -940,12 +1093,6 @@ function firstString(value: unknown): string | undefined {
   }
 
   return undefined;
-}
-
-function assignCustomField(payload: PipedriveDealPayload, fieldKey: string | undefined, value: unknown) {
-  if (fieldKey && value !== undefined && value !== "") {
-    payload[fieldKey] = value;
-  }
 }
 
 function minutesToPipedriveDuration(minutes: number) {

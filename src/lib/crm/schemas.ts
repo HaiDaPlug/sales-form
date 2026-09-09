@@ -4,11 +4,6 @@ import { IDENTITY_NUMBER_MESSAGE, normalizeIdentityNumber } from "@/lib/crm/iden
 const requiredText = (label: string) => z.string().trim().min(1, `${label} krävs`);
 const optionalText = z.string().trim().optional();
 const recordId = z.union([z.string(), z.number()]);
-/** The `errorMap` keeps a missing value from falling back to Zod's English "Invalid input". */
-const requiredRecordId = (label: string) =>
-  z.union([z.string().trim().min(1, `${label} krävs`), z.number()], {
-    errorMap: () => ({ message: `${label} krävs` })
-  });
 
 /**
  * ISO calendar date, e.g. 2026-08-03. Guards against free text reaching
@@ -27,8 +22,6 @@ const isoDate = (label: string) =>
       }
     });
 
-const optionalIsoDate = (label: string) => isoDate(label).optional().or(z.literal(""));
-
 /** 24-hour clock time, e.g. 13:30. */
 const isoTime = (label: string) =>
   z
@@ -40,10 +33,11 @@ const isoTime = (label: string) =>
  * Organisationsnummer or personnummer, in one field.
  *
  * Private individuals and sole traders are registered as organizations with
- * their personnummer here, so both shapes must pass. The value is normalized to
- * the stored 10-digit form (`NNNNNN-NNNN`) at parse time — a 12-digit
- * personnummer would otherwise be stored as a second spelling of a customer who
- * already exists, defeating the duplicate check.
+ * their personnummer here, so both shapes must pass and are handled alike —
+ * there is no separate mode for them. The value is normalized to the stored
+ * 10-digit form (`NNNNNN-NNNN`) at parse time — a 12-digit personnummer would
+ * otherwise be stored as a second spelling of a customer who already exists,
+ * defeating the duplicate check.
  *
  * Checksum validation is deliberately omitted — the client has not confirmed
  * whether foreign customers are in scope, so format-only avoids false rejects.
@@ -78,28 +72,20 @@ export const personSchema = z.object({
   organizationId: recordId.optional()
 });
 
-/**
- * Whether the customer is a company or a private individual / sole trader.
- * Both are stored as Pipedrive organizations; the distinction drives UI copy
- * and tells the seller that a personnummer belongs in the identity field.
- */
-export const customerTypeSchema = z.enum(["company", "individual"]);
-
 export const organizationSchema = z.object({
   id: recordId.optional(),
   name: requiredText("Organisationsnamn"),
-  customerType: customerTypeSchema.optional(),
   website: optionalText,
   address: optionalText,
   city: optionalText,
   // Optional here: the meeting step must work with no organization data at all.
-  // Normalized when present so it matches the stored form used by the deal and
-  // document steps.
+  // Normalized when present so it matches the stored form used by the prospect
+  // and document steps.
   organizationNumber: optionalIdentityNumber
 });
 
 /**
- * `name` may be blank here, unlike on a deal. The wizard always sends an
+ * `name` may be blank here, unlike on a prospect. The wizard always sends an
  * organization object with every field initialized to `""`, so `.partial()`
  * alone is not enough — it makes the key optional but still runs
  * `requiredText` on a name that is present and blank, failing a meeting booked
@@ -130,10 +116,8 @@ const meetingOrganizationSchema = organizationSchema.partial().extend({
  * A selected organization is exempt: it already exists in Pipedrive with a
  * name, whether or not the form carries a copy of it. That is the one case
  * where the output can lack a name, so a blank one is normalized away rather
- * than passed on as `""` — otherwise
- * `parsed.organization?.name ?? parsed.person.name` would resolve to an empty
- * string, since `??` does not fall back on `""`. No consumer has to defend
- * against a blank name that never reaches it.
+ * than passed on as `""`. No consumer has to defend against a blank name that
+ * never reaches it.
  *
  * Applied after parsing rather than through `z.preprocess`, which widens its
  * input to `unknown` and would erase the shape the wizard's organization fields
@@ -145,11 +129,8 @@ const optionalOrganization = meetingOrganizationSchema
   .transform((organization, ctx) => {
     if (!organization) return undefined;
 
-    // `customerType` is excluded deliberately: it is a UI mode with a default
-    // ("company"), not something the seller entered, so it must not by itself
-    // make an otherwise empty organization look filled in.
-    const hasContent = Object.entries(organization).some(
-      ([key, field]) => key !== "customerType" && field !== undefined && String(field).trim() !== ""
+    const hasContent = Object.values(organization).some(
+      (field) => field !== undefined && String(field).trim() !== ""
     );
 
     if (!hasContent) return undefined;
@@ -199,7 +180,24 @@ export const meetingStepSchema = z.object({
   locationOrLink: optionalText
 });
 
-export const dealStepSchema = z.object({
+/**
+ * How the sale is evidenced for quality control: a recorded call, or a
+ * contract the customer signs digitally. One or the other — the document says
+ * audio replaces signing — and the prospect's "Underlag" field holds one value.
+ */
+export const evidenceMethodSchema = z.enum(["audio", "signature"], {
+  errorMap: () => ({ message: "Välj underlag: ljudfil eller digital signering" })
+});
+
+export type EvidenceMethod = z.infer<typeof evidenceMethodSchema>;
+
+/**
+ * The prospect step. No title: it is derived from the organization name on
+ * the server (`prospectTitle`). No seller: the session supplies it. No
+ * pipeline or stage: a lead has neither, and the employee who converts it in
+ * Pipedrive chooses them.
+ */
+export const prospectStepSchema = z.object({
   person: personSchema.extend({
     phone: requiredText("Telefon"),
     email: z.string().trim().email("Ange en giltig e-post")
@@ -209,25 +207,18 @@ export const dealStepSchema = z.object({
     address: requiredText("Adress"),
     organizationNumber
   }),
-  deal: z.object({
-    id: recordId.optional(),
-    title: requiredText("Affärstitel"),
-    value: z.coerce.number().min(0, "Värde måste vara 0 eller mer"),
-    currency: z.enum(["SEK", "EUR", "USD"]).default("SEK"),
-    pipelineId: requiredRecordId("Pipeline"),
-    stageId: recordId.optional()
-  }),
-  sellerId: requiredRecordId("Affärens säljare"),
+  value: z.coerce.number().min(0, "Värde måste vara 0 eller mer"),
+  currency: z.enum(["SEK", "EUR", "USD"]).default("SEK"),
+  evidenceMethod: evidenceMethodSchema,
   viktigastForKunden: requiredText("Viktigast för kunden"),
-  fakturaStart: isoDate("Faktura start"),
+  /** One date for both invoicing and the agreement, as the client asked. */
+  fakturaAvtalStart: isoDate("Faktura/avtal start"),
   fakturagrupp: requiredText("Fakturagrupp"),
   contractLengthMonths: z.coerce.number().positive().optional(),
-  contractStartDate: optionalIsoDate("Avtalsstart"),
   monthlyCost: z.coerce.number().min(0).optional(),
   startFee: z.coerce.number().min(0).optional(),
   totalDealValue: z.coerce.number().min(0).optional(),
-  bindingPeriodMonths: z.coerce.number().min(0).optional(),
-  cancellationPeriodMonths: z.coerce.number().min(0).optional()
+  bindingPeriodMonths: z.coerce.number().min(0).optional()
 });
 
 /**
@@ -381,16 +372,17 @@ export const createActivitySchema = z.object({
 export const createNoteSchema = z
   .object({
     content: requiredText("Innehåll"),
+    lead_id: optionalText,
     deal_id: recordId.optional(),
     person_id: recordId.optional(),
     org_id: recordId.optional()
   })
   .refine(
-    (value) => Boolean(value.deal_id ?? value.person_id ?? value.org_id),
-    "En anteckning måste kopplas till en affär, person eller organisation"
+    (value) => Boolean(value.lead_id ?? value.deal_id ?? value.person_id ?? value.org_id),
+    "En anteckning måste kopplas till ett prospekt, en affär, person eller organisation"
   );
 
 export type MeetingStepInput = z.infer<typeof meetingStepSchema>;
-export type DealStepInput = z.infer<typeof dealStepSchema>;
+export type ProspectStepInput = z.infer<typeof prospectStepSchema>;
 export type MediacleaningStepInput = z.infer<typeof mediacleaningStepSchema>;
 export type ContractStepInput = z.infer<typeof contractStepSchema>;

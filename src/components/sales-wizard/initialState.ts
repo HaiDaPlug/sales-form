@@ -1,8 +1,8 @@
 import type {
   ContractStepData,
-  DealStepData,
   MediacleaningStepData,
-  MeetingStepData
+  MeetingStepData,
+  ProspectStepData
 } from "@/lib/crm/types";
 
 /**
@@ -18,7 +18,7 @@ import type {
 
 export const initialMeeting: MeetingStepData = {
   person: { name: "", phone: "", phoneType: "mobile", email: "", emailType: "work" },
-  organization: { name: "", customerType: "company", website: "", address: "", city: "", organizationNumber: "" },
+  organization: { name: "", website: "", address: "", city: "", organizationNumber: "" },
   meetingType: "IT-genomgång",
   agenda: "",
   technicianNotes: "",
@@ -31,21 +31,21 @@ export const initialMeeting: MeetingStepData = {
   locationOrLink: ""
 };
 
-export const initialDeal: DealStepData = {
+export const initialProspect: ProspectStepData = {
   person: { name: "", phone: "", phoneType: "mobile", email: "", emailType: "work" },
-  organization: { name: "", customerType: "company", website: "", address: "", city: "", organizationNumber: "" },
-  deal: { title: "", value: 0, currency: "SEK", pipelineId: "", stageId: "" },
-  sellerId: "",
+  organization: { name: "", website: "", address: "", city: "", organizationNumber: "" },
+  value: 0,
+  currency: "SEK",
+  // Blank on purpose: the seller has to say which evidence the sale rests on.
+  evidenceMethod: undefined as unknown as ProspectStepData["evidenceMethod"],
   viktigastForKunden: "",
-  fakturaStart: "",
+  fakturaAvtalStart: "",
   fakturagrupp: "",
   contractLengthMonths: 12,
-  contractStartDate: "",
   monthlyCost: 0,
   startFee: 0,
   totalDealValue: 0,
-  bindingPeriodMonths: 12,
-  cancellationPeriodMonths: 3
+  bindingPeriodMonths: 12
 };
 
 export const initialMediacleaning: MediacleaningStepData = {

@@ -19,15 +19,16 @@ export type PipedriveOrganizationPayload = {
   [customFieldKey: string]: unknown;
 };
 
-export type PipedriveDealPayload = {
+/**
+ * `POST /v1/leads`. A lead needs a title and at least one of person or
+ * organization; custom fields use the deal field keys, which leads inherit.
+ */
+export type PipedriveLeadPayload = {
   title: string;
+  owner_id?: number;
   person_id?: CrmRecordId;
-  org_id?: CrmRecordId;
-  user_id?: CrmRecordId;
-  value?: number;
-  currency?: string;
-  pipeline_id?: CrmRecordId;
-  stage_id?: CrmRecordId;
+  organization_id?: CrmRecordId;
+  value?: { amount: number; currency: string };
   [customFieldKey: string]: unknown;
 };
 
@@ -39,6 +40,7 @@ export type PipedriveActivityPayload = {
   duration?: string;
   person_id?: CrmRecordId;
   org_id?: CrmRecordId;
+  lead_id?: string;
   note?: string;
   location?: string;
   user_id?: CrmRecordId;
@@ -46,6 +48,8 @@ export type PipedriveActivityPayload = {
 
 export type PipedriveNotePayload = {
   content: string;
+  /** Lead ids are UUIDs, unlike every other Pipedrive id. */
+  lead_id?: string;
   deal_id?: CrmRecordId;
   person_id?: CrmRecordId;
   org_id?: CrmRecordId;
@@ -54,6 +58,7 @@ export type PipedriveNotePayload = {
 export type PipedriveFilePayload = {
   file: Blob;
   fileName: string;
+  leadId?: string;
   dealId?: CrmRecordId;
   personId?: CrmRecordId;
   organizationId?: CrmRecordId;
@@ -61,7 +66,7 @@ export type PipedriveFilePayload = {
 };
 
 /**
- * Pipedrive's `/v1/*\/search` endpoints wrap hits as
+ * Pipedrive's `/search` endpoints wrap hits as
  * `{ data: { items: [{ result_score, item }] } }` rather than returning a flat
  * array. Verified against the live API. The raw envelope is normalized
  * server-side so the UI never has to know this shape.
@@ -71,13 +76,11 @@ export type PipedriveSearchEnvelope = {
 };
 
 /**
- * Flat, UI-ready option for the reference dropdowns (users, pipelines, stages).
- * `pipelineId` is set on stages so the UI can filter them without another fetch.
+ * Flat, UI-ready option for a reference list (users, sellers).
  */
 export type ReferenceOption = {
   id: CrmRecordId;
   name: string;
-  pipelineId?: CrmRecordId;
 };
 
 /**
@@ -102,7 +105,7 @@ export type MeetingOverlap = {
   sameContact?: boolean;
 };
 
-/** Flat, UI-ready search hit. One shape for all three record types. */
+/** Flat, UI-ready search hit. One shape for every record type. */
 export type SearchHit = {
   id: CrmRecordId;
   name: string;

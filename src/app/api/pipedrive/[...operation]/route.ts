@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
 import type { SessionPayload } from "@/lib/auth/session";
 import { requireSession, sellerFromSession, UnauthorizedError } from "@/lib/auth/server";
-import { assertCustomFieldMappings, ConfigurationError, getPipedriveConfig } from "@/lib/config/pipedrive";
+import { assertCustomFieldMappings, ConfigurationError } from "@/lib/config/pipedrive";
 import { PipedriveApiError } from "@/lib/pipedrive/client";
 import {
-  buildDealPayload,
+  buildLeadPayload,
   buildMeetingActivityPayload,
+  buildProspectNote,
   createActivity,
-  createDeal,
+  createLead,
   createNote,
   createOrganization,
   createPerson,
@@ -20,30 +21,38 @@ import {
   getDealFields,
   getOrganizationFields,
   getPersonFields,
-  getPipelines,
   getSellers,
-  getStages,
   getUsers,
   MIN_SEARCH_TERM_LENGTH,
-  resolveDealParties,
   resolveMeetingParties,
+  resolveProspectParties,
   searchDeals,
+  searchLeads,
   searchOrganizations,
   searchPersons,
   type PartialParties,
-  type ResolvedDealParties,
-  type ResolvedMeetingParties
+  type ResolvedMeetingParties,
+  type ResolvedProspectParties
 } from "@/lib/pipedrive/service";
 import {
   createActivitySchema,
   createNoteSchema,
   createOrganizationSchema,
   createPersonSchema,
-  dealStepSchema,
-  meetingStepSchema
+  meetingStepSchema,
+  prospectStepSchema
 } from "@/lib/crm/schemas";
+import { prospectTitle } from "@/lib/crm/prospect";
 import { recordHistory, recordHistorySafely } from "@/lib/history/store";
 
+/**
+ * The Pipedrive operations the portal offers.
+ *
+ * Deliberately absent, and to stay absent: creating a deal, converting a lead,
+ * changing a lead's owner or seller. Those are the back-office's acts in
+ * Pipedrive; a direct call to this backend cannot perform them because no code
+ * for them exists.
+ */
 type RouteContext = {
   params: Promise<{
     operation: string[];
@@ -75,6 +84,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
       );
     }
 
+    if (operation === "leads/search") {
+      return jsonOk(await searchLeads(requiredSearchTerm(searchParams), searchParams.get("organizationId") ?? undefined));
+    }
+
     if (operation === "users") return jsonOk(await getUsers());
     if (operation === "sellers") return jsonOk(await getSellers());
 
@@ -93,19 +106,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
         })
       );
     }
-    if (operation === "pipelines") return jsonOk(await getPipelines());
-    if (operation === "stages") return jsonOk(await getStages(searchParams.get("pipelineId") ?? undefined));
+
     if (operation === "custom-field-mappings") return jsonOk(getCustomFieldMappings());
     if (operation === "deal-fields") return jsonOk(await getDealFields());
     if (operation === "person-fields") return jsonOk(await getPersonFields());
     if (operation === "organization-fields") return jsonOk(await getOrganizationFields());
-    if (operation === "scheduler-config") {
-      return jsonOk({
-        provider: "pipedrive",
-        bookingUrl: getPipedriveConfig().schedulerUrl ?? null,
-        createsActivityAfterBooking: true
-      });
-    }
 
     return jsonError(`Unknown Pipedrive GET operation: ${operation}`, 404);
   } catch (error) {
@@ -190,38 +195,54 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
-    if (operation === "deals") {
-      const parsed = dealStepSchema.parse(body);
+    if (operation === "prospects") {
+      const parsed = prospectStepSchema.parse(body);
+      const seller = sellerFromSession(session);
+      const title = prospectTitle(parsed.organization.name);
 
       // Config is checked before anything is created: a later failure would
       // otherwise leave orphaned person/organization records behind.
       assertCustomFieldMappings();
 
-      let parties: ResolvedDealParties | undefined;
+      let parties: ResolvedProspectParties | undefined;
 
       try {
-        parties = await resolveDealParties(parsed);
+        parties = await resolveProspectParties(parsed);
 
-        const deal = await createDeal(await buildDealPayload(parsed, parties));
+        const lead = await createLead(await buildLeadPayload(parsed, parties, seller));
+        const leadId = readLeadId(lead);
 
-        // The deal exists from here on; a history failure must not present it
-        // as a failed run the seller would retry into a duplicate deal.
+        // The commercial terms have no field of their own. The note is a
+        // convenience for QC, so its failure is reported, never fatal: the
+        // prospect exists and must not be created twice by a retry.
+        let noteWarning: string | undefined;
+
+        if (leadId) {
+          try {
+            await createNote({ content: buildProspectNote(parsed, seller), lead_id: leadId });
+          } catch (error) {
+            noteWarning = `Anteckningen med avtalsvillkoren kunde inte sparas på prospektet: ${describe(error)}`;
+            console.error("Prospect note failed:", error);
+          }
+        }
+
+        // The prospect exists from here on; a history failure must not present
+        // it as a failed run the seller would retry into a duplicate.
         await recordHistorySafely({
-          kind: "deal",
-          status: "success",
+          kind: "prospect",
+          status: noteWarning ? "warning" : "success",
           createdBy: session.subject,
           sellerOptionId: session.sellerOptionId,
           customerName: parsed.organization.name,
-          summary: `${parsed.deal.title} — ${parsed.deal.value} ${parsed.deal.currency ?? "SEK"}`,
-          pipedriveDealId: readRecordId(deal),
+          summary: `${title} — ${parsed.evidenceMethod === "audio" ? "ljudfil" : "digital signering"}`,
+          pipedriveLeadId: leadId,
           pipedrivePersonId: parties.personId,
           pipedriveOrganizationId: parties.organizationId,
+          errorMessage: noteWarning,
           payload: parsed
         });
 
-        // The resolved IDs travel back so the wizard can reuse them instead of
-        // re-creating the same records on a retry.
-        return jsonOk({ ...(deal as Record<string, unknown>), _parties: parties });
+        return jsonOk({ ...(lead as Record<string, unknown>), _parties: parties, _warning: noteWarning });
       } catch (error) {
         if (error instanceof ExistingRecordProtectionError) throw error;
 
@@ -229,13 +250,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
         // person; recover it rather than losing the ID.
         const partial = parties ?? partialPartiesOf(error);
 
-        await recordFailure("deal", session, parsed.organization.name, parsed.deal.title, error, partial);
+        await recordFailure("prospect", session, parsed.organization.name, title, error, partial);
 
         // Person/organization may already exist in Pipedrive even though the
-        // deal failed. Deleting them is not an option (the token may lack
-        // permission, and removing real CRM records is worse than keeping
-        // them), so the IDs are returned instead — the wizard fills them in so
-        // a retry reuses the records rather than creating duplicates.
+        // lead failed. Deleting them is not an option (removing real CRM
+        // records is worse than keeping them), so the IDs are returned — the
+        // wizard fills them in so a retry reuses the records.
         throw new PartialRecordFailure(
           error instanceof Error ? error.message : String(error),
           errorStatus(error),
@@ -266,8 +286,14 @@ function readRecordId(record: unknown): string | number | undefined {
   return typeof id === "string" || typeof id === "number" ? id : undefined;
 }
 
+/** Lead ids are UUID strings; anything else is not a lead. */
+function readLeadId(record: unknown): string | undefined {
+  const id = readRecordId(record);
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
 async function recordFailure(
-  kind: "meeting" | "deal",
+  kind: "meeting" | "prospect",
   session: SessionPayload,
   customerName: string | undefined,
   summary: string,
@@ -288,11 +314,15 @@ async function recordFailure(
       // rather than silently orphaned in the CRM.
       pipedrivePersonId: parties?.personId,
       pipedriveOrganizationId: parties?.organizationId,
-      errorMessage: error instanceof Error ? error.message : String(error)
+      errorMessage: describe(error)
     });
   } catch {
     /* ignored */
   }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 class BadRequestError extends Error {
@@ -318,6 +348,7 @@ class PartialRecordFailure extends Error {
 /** Pipedrive failures keep their own status; anything else is a server fault. */
 function errorStatus(error: unknown): number {
   if (error instanceof PartialResolutionError) return error.status;
+  if (error instanceof ConfigurationError) return error.status;
 
   return error instanceof PipedriveApiError ? error.status : 500;
 }
@@ -341,7 +372,6 @@ function describeCreatedRecords(parties?: PartialParties): string | undefined {
 function partialPartiesOf(error: unknown): PartialParties | undefined {
   return error instanceof PartialResolutionError ? error.parties : undefined;
 }
-
 
 function requiredQuery(searchParams: URLSearchParams, name: string) {
   const value = searchParams.get(name);

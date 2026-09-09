@@ -6,30 +6,37 @@ import { useCallback, useMemo, useState } from "react";
 import type { ZodSchema } from "zod";
 import {
   contractDocumentRequestSchema,
-  dealStepSchema,
   mediacleaningStepSchema,
-  meetingStepSchema
+  meetingStepSchema,
+  prospectStepSchema
 } from "@/lib/crm/schemas";
+import { prospectTitle } from "@/lib/crm/prospect";
 import type { CrmRecordId, SubmitState, WizardData } from "@/lib/crm/types";
 import type { MeetingOverlap } from "@/lib/pipedrive/types";
-import type { WorkflowKind } from "@/lib/history/types";
 import { ContractStep } from "@/components/sales-wizard/steps/ContractStep";
-import { DealStep } from "@/components/sales-wizard/steps/DealStep";
 import { MediacleaningStep } from "@/components/sales-wizard/steps/MediacleaningStep";
 import { MeetingStep } from "@/components/sales-wizard/steps/MeetingStep";
+import { ProspectStep } from "@/components/sales-wizard/steps/ProspectStep";
 import { HistoryPanel } from "@/components/sales-wizard/HistoryPanel";
 import { OverlapDialog } from "@/components/sales-wizard/OverlapDialog";
 import {
   initialContract,
-  initialDeal,
   initialMediacleaning,
-  initialMeeting
+  initialMeeting,
+  initialProspect
 } from "@/components/sales-wizard/initialState";
 import { useReferenceData } from "@/components/sales-wizard/useReferenceData";
 import { downloadBlob, formatZodErrors, readRecordId } from "@/components/sales-wizard/utils";
 
-const steps = ["Mötesbokning", "Skapa affär", "Mediacleaning", "Avtalsgenerering"];
-const stepKinds: WorkflowKind[] = ["meeting", "deal", "mediacleaning", "contract"];
+/** The four workflows, in order. `action` is the label of the button that runs one. */
+type StepKind = keyof WizardData;
+
+const STEPS: { kind: StepKind; label: string; action: string }[] = [
+  { kind: "meeting", label: "Mötesbokning", action: "Boka möte" },
+  { kind: "prospect", label: "Skapa prospekt", action: "Skapa prospekt" },
+  { kind: "mediacleaning", label: "Mediacleaning", action: "Skapa dokument" },
+  { kind: "contract", label: "Avtalsgenerering", action: "Skapa avtal" }
+];
 
 /** Per-step submit results, so a completed step cannot be run twice by accident. */
 type StepResult = {
@@ -42,35 +49,42 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
   const [activeStep, setActiveStep] = useState(0);
   const [wizardData, setWizardData] = useState<WizardData>({});
   const [meeting, setMeeting] = useState(initialMeeting);
-  const [deal, setDeal] = useState(initialDeal);
+  const [prospect, setProspect] = useState(initialProspect);
   const [mediacleaning, setMediacleaning] = useState(initialMediacleaning);
   const [contract, setContract] = useState(initialContract);
+  /** The recording chosen as evidence; not part of the JSON step data. */
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  /** The Pipedrive lead this session created, once it exists. */
+  const [createdLeadId, setCreatedLeadId] = useState<string | undefined>(undefined);
   const [errors, setErrors] = useState<string[]>([]);
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
-  const [stepResults, setStepResults] = useState<Partial<Record<WorkflowKind, StepResult>>>({});
+  const [stepResults, setStepResults] = useState<Partial<Record<StepKind, StepResult>>>({});
   const [historyToken, setHistoryToken] = useState(0);
   /** Non-empty while the overlap dialog is waiting on the seller's decision. */
   const [pendingOverlaps, setPendingOverlaps] = useState<MeetingOverlap[]>([]);
   const [checkingOverlaps, setCheckingOverlaps] = useState(false);
-  // Fetched once and shared: three of the four steps need the same lists.
   const reference = useReferenceData();
 
-  const activeKind = stepKinds[activeStep];
-  const activeResult = stepResults[activeKind];
+  const active = STEPS[activeStep];
+  const activeResult = stepResults[active.kind];
 
   const summary = useMemo(
     () => ({
       customer:
-        deal.organization.name ||
+        prospect.organization.name ||
         meeting.organization?.name ||
         mediacleaning.companyName ||
         contract.companyName ||
         "Ej valt",
-      person: deal.person.name || meeting.person.name || contract.signerName || "Ej valt",
-      deal: deal.deal.title || "Ingen affär skapad",
-      target: mediacleaning.dealId || contract.dealId ? "Affär" : "Organisation först"
+      person: prospect.person.name || meeting.person.name || contract.signerName || "Ej valt",
+      prospect: createdLeadId
+        ? `${prospectTitle(prospect.organization.name)} (skapat)`
+        : prospect.organization.name
+          ? prospectTitle(prospect.organization.name)
+          : "Inget prospekt skapat",
+      target: mediacleaning.dealId || contract.dealId ? "Befintlig affär" : "Organisation"
     }),
-    [contract.companyName, contract.dealId, contract.signerName, deal, mediacleaning.companyName, mediacleaning.dealId, meeting]
+    [contract.companyName, contract.dealId, contract.signerName, createdLeadId, mediacleaning.companyName, mediacleaning.dealId, meeting, prospect]
   );
 
   function resetFeedback() {
@@ -92,15 +106,15 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
    */
   function hydrateStepFromPrevious(index: number) {
     if (index === 1) {
-      setDeal((current) => ({
+      setProspect((current) => ({
         ...current,
         person: {
           ...current.person,
           id: current.person.id ?? meeting.person.id,
           name: current.person.name || meeting.person.name,
-          // Meeting fields are optional but the deal step requires them, so a
-          // missing value carries forward as an empty field for the seller to
-          // fill in — never as `undefined`, which the deal schema rejects.
+          // Meeting fields are optional but the prospect step requires them, so
+          // a missing value carries forward as an empty field for the seller to
+          // fill in — never as `undefined`, which the prospect schema rejects.
           phone: current.person.phone || meeting.person.phone || "",
           phoneType: current.person.phoneType || meeting.person.phoneType,
           email: current.person.email || meeting.person.email || "",
@@ -111,46 +125,39 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
           ...current.organization,
           id: current.organization.id ?? meeting.organization?.id,
           name: current.organization.name || meeting.organization?.name || "",
-          customerType: current.organization.customerType || meeting.organization?.customerType,
           website: current.organization.website || meeting.organization?.website || "",
           address: current.organization.address || meeting.organization?.address || "",
           city: current.organization.city || meeting.organization?.city || "",
           organizationNumber:
             current.organization.organizationNumber || meeting.organization?.organizationNumber || ""
         },
-        viktigastForKunden:
-          current.viktigastForKunden ||
-          [meeting.technicianNotes, meeting.internalComment].filter(Boolean).join("\n\n"),
-        deal: {
-          ...current.deal,
-          title: current.deal.title || `${meeting.organization?.name || meeting.person.name} - Digital Kontakt`
-        }
+        viktigastForKunden: current.viktigastForKunden || meeting.internalComment || ""
       }));
     }
 
     if (index === 2) {
       setMediacleaning((current) => ({
         ...current,
-        companyName: current.companyName || deal.organization.name || meeting.organization?.name || "",
-        organizationNumber: current.organizationNumber || deal.organization.organizationNumber || "",
-        address: current.address || deal.organization.address || meeting.organization?.address || "",
-        city: current.city || deal.organization.city || meeting.organization?.city || "",
-        organizationId: current.organizationId || String(deal.organization.id ?? meeting.organization?.id ?? ""),
-        dealId: current.dealId || String(deal.deal.id ?? "")
+        companyName: current.companyName || prospect.organization.name || meeting.organization?.name || "",
+        organizationNumber: current.organizationNumber || prospect.organization.organizationNumber || "",
+        address: current.address || prospect.organization.address || meeting.organization?.address || "",
+        city: current.city || prospect.organization.city || meeting.organization?.city || "",
+        organizationId: current.organizationId || String(prospect.organization.id ?? meeting.organization?.id ?? "")
       }));
     }
 
     if (index === 3) {
       setContract((current) => ({
         ...current,
-        companyName: current.companyName || deal.organization.name || mediacleaning.companyName,
-        organizationNumber: current.organizationNumber || deal.organization.organizationNumber || mediacleaning.organizationNumber,
-        signerName: current.signerName || deal.person.name || meeting.person.name,
-        address: current.address || deal.organization.address || mediacleaning.address,
-        price: current.price || deal.monthlyCost || deal.deal.value || 0,
-        bindingPeriodMonths: current.bindingPeriodMonths || deal.bindingPeriodMonths || 12,
-        organizationId: current.organizationId || String(deal.organization.id ?? mediacleaning.organizationId ?? ""),
-        dealId: current.dealId || String(deal.deal.id ?? mediacleaning.dealId ?? "")
+        companyName: current.companyName || prospect.organization.name || mediacleaning.companyName,
+        organizationNumber:
+          current.organizationNumber || prospect.organization.organizationNumber || mediacleaning.organizationNumber,
+        signerName: current.signerName || prospect.person.name || meeting.person.name,
+        address: current.address || prospect.organization.address || mediacleaning.address,
+        price: current.price || prospect.monthlyCost || prospect.value || 0,
+        bindingPeriodMonths: current.bindingPeriodMonths || prospect.bindingPeriodMonths || 12,
+        organizationId: current.organizationId || String(prospect.organization.id ?? mediacleaning.organizationId ?? ""),
+        dealId: current.dealId || String(mediacleaning.dealId ?? "")
       }));
     }
   }
@@ -218,22 +225,29 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
   }
 
+  async function submitProspect() {
+    // The file is validated here because it lives outside the schema. Without
+    // it an audio prospect would be created with no evidence and no way to
+    // reach "Ljudfil uppladdad".
+    if (prospect.evidenceMethod === "audio" && !audioFile) {
+      setErrors(["Välj ljudfilen från säljsamtalet, eller välj digital signering som underlag."]);
+      return;
+    }
+
+    await validateAndSubmit(prospectStepSchema, prospect, "/api/pipedrive/prospects", "prospect");
+  }
+
   async function submitCurrentStep() {
     resetFeedback();
 
-    if (activeStep === 0) {
-      await submitMeeting();
-    }
+    if (active.kind === "meeting") await submitMeeting();
+    if (active.kind === "prospect") await submitProspect();
 
-    if (activeStep === 1) {
-      await validateAndSubmit(dealStepSchema, deal, "/api/pipedrive/deals", "deal");
-    }
-
-    if (activeStep === 2) {
+    if (active.kind === "mediacleaning") {
       await validateAndSubmit(mediacleaningStepSchema, mediacleaning, "/api/pdf/mediacleaning", "mediacleaning");
     }
 
-    if (activeStep === 3) {
+    if (active.kind === "contract") {
       await validateAndSubmit(
         contractDocumentRequestSchema,
         {
@@ -251,7 +265,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     schema: ZodSchema,
     value: unknown,
     endpoint: string,
-    key: WorkflowKind,
+    key: StepKind,
     storedValue?: unknown
   ) {
     // Guard against a second run creating a duplicate CRM record.
@@ -266,7 +280,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
     setWizardData((current) => ({
       ...current,
-      [key]: (storedValue ?? parsed.data) as WizardData[keyof WizardData]
+      [key]: (storedValue ?? parsed.data) as WizardData[typeof key]
     }));
     setSubmitState({ status: "loading", message: "Skickar..." });
 
@@ -305,7 +319,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
    * Pipedrive steps. The created record's ID is written back into wizard state
    * so later steps can reference it instead of asking the seller to type it.
    */
-  async function handleJsonResponse(response: Response, key: WorkflowKind): Promise<string> {
+  async function handleJsonResponse(response: Response, key: StepKind): Promise<string> {
     const result = (await response.json()) as {
       ok: boolean;
       error?: string;
@@ -318,8 +332,9 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     };
 
     if (!response.ok || !result.ok) {
-      // A deal or meeting can fail after its person/organization were created.
-      // Keep those IDs so retrying reuses the records instead of duplicating them.
+      // A prospect or meeting can fail after its person/organization were
+      // created. Keep those IDs so retrying reuses the records instead of
+      // duplicating them.
       if (result.parties) {
         applyResolvedParties(result.parties);
         if (key === "meeting") applyMeetingParties(result.parties);
@@ -329,15 +344,15 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     }
 
     const recordId = readRecordId(result.data);
+    const parties = (result.data as {
+      _parties?: { personId?: CrmRecordId; organizationId?: CrmRecordId; personLinkedToOrganization?: boolean };
+      _warning?: string;
+    })?._parties;
 
     if (key === "meeting") {
       // The server resolved (and possibly created) the contact and, when named,
-      // the organization. Storing their IDs means the deal step reuses those
-      // records instead of creating a second copy of the same customer.
-      const parties = (result.data as {
-        _parties?: { personId?: CrmRecordId; organizationId?: CrmRecordId };
-      })?._parties;
-
+      // the organization. Storing their IDs means the prospect step reuses
+      // those records instead of creating a second copy of the same customer.
       if (parties) {
         applyResolvedParties(parties);
         applyMeetingParties(parties);
@@ -346,24 +361,14 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       return recordId ? `Mötet är bokat i Pipedrive (aktivitet ${recordId}).` : "Mötet är bokat i Pipedrive.";
     }
 
-    if (key === "deal" && recordId !== undefined) {
-      // The server resolved (and possibly created) the person and organization.
-      // Storing their IDs means a re-run reuses them instead of duplicating.
-      const parties = (result.data as {
-        _parties?: {
-          personId?: CrmRecordId;
-          organizationId?: CrmRecordId;
-          personLinkedToOrganization?: boolean;
-        };
-      })?._parties;
-
+    if (key === "prospect" && typeof recordId === "string") {
       if (parties) applyResolvedParties(parties);
+      setCreatedLeadId(recordId);
 
-      setDeal((current) => ({ ...current, deal: { ...current.deal, id: recordId } }));
-      setMediacleaning((current) => ({ ...current, dealId: current.dealId || String(recordId) }));
-      setContract((current) => ({ ...current, dealId: current.dealId || String(recordId) }));
+      const warning = (result.data as { _warning?: string })?._warning;
+      const title = prospectTitle(prospect.organization.name);
 
-      return `Affären är skapad i Pipedrive (affär ${recordId}) och kopplad till kontakt och organisation.`;
+      return `${title} är skapat i Pipedrive och kopplat till kontakt och organisation.${warning ? ` ${warning}` : ""}`;
     }
 
     return "Steget är skickat.";
@@ -379,7 +384,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
     organizationId?: CrmRecordId;
     personLinkedToOrganization?: boolean;
   }) {
-    setDeal((current) => ({
+    setProspect((current) => ({
       ...current,
       person: {
         ...current.person,
@@ -450,11 +455,11 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
   const allowResubmit = useCallback(() => {
     setStepResults((current) => {
       const next = { ...current };
-      delete next[activeKind];
+      delete next[active.kind];
       return next;
     });
     resetFeedback();
-  }, [activeKind]);
+  }, [active.kind]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -476,19 +481,19 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
           />
         </div>
         <nav className="steps" aria-label="Arbetsflöde">
-          {steps.map((step, index) => (
+          {STEPS.map((step, index) => (
             <button
-              key={step}
+              key={step.kind}
               className="step-button"
               data-active={activeStep === index}
-              data-done={Boolean(stepResults[stepKinds[index]])}
+              data-done={Boolean(stepResults[step.kind])}
               type="button"
-              aria-label={`Steg ${index + 1}: ${step}`}
+              aria-label={`Steg ${index + 1}: ${step.label}`}
               aria-current={activeStep === index ? "step" : undefined}
               onClick={() => goToStep(index)}
             >
-              <span className="step-number">{stepResults[stepKinds[index]] ? "✓" : index + 1}</span>
-              <span>{step}</span>
+              <span className="step-number">{stepResults[step.kind] ? "✓" : index + 1}</span>
+              <span>{step.label}</span>
             </button>
           ))}
         </nav>
@@ -505,10 +510,11 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       <section className="main">
         <div className="toolbar">
           <div>
-            <p className="eyebrow">Steg {activeStep + 1} av 4</p>
-            <h1>{steps[activeStep]}</h1>
+            <p className="eyebrow">Steg {activeStep + 1} av {STEPS.length}</p>
+            <h1>{active.label}</h1>
             <p className="hint">
-              Varje steg kan återanvända kunddata, men bara steget Skapa affär får skapa en Pipedrive-affär.
+              Formuläret skapar prospekt, aldrig affärer. Godkännande och konvertering till affär görs av
+              kvalitetskontrollen direkt i Pipedrive.
             </p>
             <p className="hint required-legend">
               Fält märkta med <span className="required-mark">*</span> måste fyllas i innan steget kan köras.
@@ -519,11 +525,20 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
         <div className="workspace">
           <section className="panel">
-            {activeStep === 0 && (
+            {active.kind === "meeting" && (
               <MeetingStep data={meeting} onChange={setMeeting} reference={reference} sellerName={currentUser} />
             )}
-            {activeStep === 1 && <DealStep data={deal} onChange={setDeal} reference={reference} sellerName={currentUser} />}
-            {activeStep === 2 && (
+            {active.kind === "prospect" && (
+              <ProspectStep
+                data={prospect}
+                onChange={setProspect}
+                reference={reference}
+                sellerName={currentUser}
+                audioFile={audioFile}
+                onAudioFileChange={setAudioFile}
+              />
+            )}
+            {active.kind === "mediacleaning" && (
               <MediacleaningStep
                 data={mediacleaning}
                 onChange={setMediacleaning}
@@ -531,7 +546,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
                 sellerName={currentUser}
               />
             )}
-            {activeStep === 3 && (
+            {active.kind === "contract" && (
               <ContractStep
                 data={contract}
                 onChange={setContract}
@@ -578,13 +593,13 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
                       ? "Kontrollerar tiden..."
                       : submitState.status === "loading"
                         ? "Skickar..."
-                        : "Validera och skicka"}
+                        : active.action}
                   </button>
                 )}
                 <button
                   className="btn"
                   type="button"
-                  disabled={activeStep === steps.length - 1}
+                  disabled={activeStep === STEPS.length - 1}
                   onClick={() => goToStep(activeStep + 1)}
                 >
                   Nästa
@@ -605,8 +620,8 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
                 <dd>{summary.person}</dd>
               </div>
               <div>
-                <dt>Affär</dt>
-                <dd>{summary.deal}</dd>
+                <dt>Prospekt</dt>
+                <dd>{summary.prospect}</dd>
               </div>
               <div>
                 <dt>Dokumentuppladdning</dt>

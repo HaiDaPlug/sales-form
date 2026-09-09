@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  CheckLabel,
   FormSection,
   ReadOnlyField,
   ReferenceSelect,
@@ -18,8 +17,6 @@ export function MeetingStep({ data, onChange, reference, sellerName }: StepProps
   // Differences between the typed contact details and the linked record. Held
   // in the step rather than the wizard: they are resolved here and never submitted.
   const [conflicts, setConflicts] = useState<FieldConflict[]>([]);
-
-  const isIndividual = data.organization?.customerType === "individual";
 
   function resolveConflict(conflict: FieldConflict, choice: ConflictChoice) {
     // "Keep existing" already matches what the lookup wrote into the field, so
@@ -101,24 +98,12 @@ export function MeetingStep({ data, onChange, reference, sellerName }: StepProps
         <TextField label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <TextField label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
         <TextField
-          label={isIndividual ? "Kundnamn" : "Organisation"}
+          label="Organisation"
           value={data.organization?.name}
           onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
         />
-        <div className="field full">
-          <CheckLabel
-            label="Privatperson eller enskild firma (personnummer används som organisationsnummer)"
-            checked={isIndividual}
-            onChange={(checked) =>
-              onChange({
-                ...data,
-                organization: { ...data.organization, customerType: checked ? "individual" : "company" }
-              })
-            }
-          />
-        </div>
         <TextField
-          label={isIndividual ? "Personnummer" : "Organisationsnummer"}
+          label="Organisationsnummer/personnummer"
           value={data.organization?.organizationNumber}
           onChange={(organizationNumber) =>
             onChange({ ...data, organization: { ...data.organization, organizationNumber } })

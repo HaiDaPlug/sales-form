@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
+import type { MeetingStepInput, ProspectStepInput } from "@/lib/crm/schemas";
 
 vi.mock("@/lib/pipedrive/client", () => ({
   pipedriveRequest: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock("@/lib/pipedrive/client", () => ({
 }));
 
 const { pipedriveRequest } = await import("@/lib/pipedrive/client");
-const { buildOrganizationPayload, resolveDealParties, resolveMeetingParties, searchOrganizations } = await import(
+const { buildOrganizationPayload, resolveMeetingParties, resolveProspectParties, searchOrganizations } = await import(
   "@/lib/pipedrive/service"
 );
 const { resetEnvCache } = await import("@/lib/config/env");
@@ -54,7 +54,7 @@ function meetingParties(overrides: Partial<MeetingStepInput> = {}): MeetingStepI
   } as MeetingStepInput;
 }
 
-function dealParties(overrides: Partial<DealStepInput> = {}): DealStepInput {
+function prospectParties(overrides: Partial<ProspectStepInput> = {}): ProspectStepInput {
   return {
     person: { name: "Anna Andersson", email: "anna@example.se", phone: "0701234567" },
     organization: {
@@ -64,13 +64,14 @@ function dealParties(overrides: Partial<DealStepInput> = {}): DealStepInput {
       address: "Storgatan 1",
       city: "Stockholm"
     },
-    deal: { title: "Andersson AB - Digital Kontakt", value: 12000, currency: "SEK", pipelineId: "1" },
-    sellerId: "7",
+    value: 12000,
+    currency: "SEK",
+    evidenceMethod: "signature",
     viktigastForKunden: "Synlighet",
-    fakturaStart: "2026-09-01",
+    fakturaAvtalStart: "2026-09-01",
     fakturagrupp: "Standard",
     ...overrides
-  } as DealStepInput;
+  } as ProspectStepInput;
 }
 
 /** S03, S04 — the identity number must reach Pipedrive, not just the PDF. */
@@ -140,10 +141,10 @@ describe("buildOrganizationPayload", () => {
 
 /** The identity must be stored no matter which workflow created the record. */
 describe("organization identity across creation paths", () => {
-  it("stores the identity when the deal step creates the organization (S05)", async () => {
+  it("stores the identity when the prospect step creates the organization (S05)", async () => {
     vi.mocked(pipedriveRequest).mockResolvedValueOnce({ id: 7 }).mockResolvedValueOnce({ id: 11 });
 
-    await resolveDealParties(dealParties());
+    await resolveProspectParties(prospectParties());
 
     const [path, options] = vi.mocked(pipedriveRequest).mock.calls[0];
     expect(path).toBe("/organizations");
@@ -180,7 +181,7 @@ describe("organization identity across creation paths", () => {
 
     await resolveMeetingParties(
       meetingParties({
-        organization: { name: "Anna Andersson", customerType: "individual", organizationNumber: "850101-1234" }
+        organization: { name: "Anna Andersson", organizationNumber: "850101-1234" }
       })
     );
 
@@ -193,7 +194,7 @@ describe("organization identity across creation paths", () => {
   it("does not touch an organization the seller selected", async () => {
     vi.mocked(pipedriveRequest).mockResolvedValueOnce({ id: 11 });
 
-    await resolveDealParties(dealParties({ organization: { ...dealParties().organization, id: 7 } }));
+    await resolveProspectParties(prospectParties({ organization: { ...prospectParties().organization, id: 7 } }));
 
     // Existing CRM records are read-only: only the person is created.
     expect(vi.mocked(pipedriveRequest).mock.calls.map(([path]) => path)).toEqual(["/persons"]);

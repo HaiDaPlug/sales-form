@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   contractDocumentRequestSchema,
   contractStepSchema,
-  dealStepSchema,
   mediacleaningStepSchema,
-  meetingStepSchema
+  meetingStepSchema,
+  prospectStepSchema
 } from "@/lib/crm/schemas";
 
 /** A meeting that passes validation; individual tests override one field. */
@@ -22,7 +22,7 @@ function meeting(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function deal(overrides: Record<string, unknown> = {}) {
+function prospect(overrides: Record<string, unknown> = {}) {
   return {
     person: { name: "Anna Andersson", email: "anna@example.se", phone: "0701234567" },
     organization: {
@@ -31,10 +31,10 @@ function deal(overrides: Record<string, unknown> = {}) {
       website: "https://andersson.se",
       address: "Storgatan 1"
     },
-    deal: { title: "Andersson AB - Digital Kontakt", value: 12000, pipelineId: "1" },
-    sellerId: "7",
+    value: 12000,
+    evidenceMethod: "signature",
     viktigastForKunden: "Synlighet på Google",
-    fakturaStart: "2026-09-01",
+    fakturaAvtalStart: "2026-09-01",
     fakturagrupp: "Standard",
     ...overrides
   };
@@ -78,7 +78,6 @@ function contract(overrides: Record<string, unknown> = {}) {
  */
 const BLANK_WIZARD_ORGANIZATION = {
   name: "",
-  customerType: "company",
   website: "",
   address: "",
   city: "",
@@ -144,7 +143,7 @@ describe("meetingStepSchema (S01, S04)", () => {
     ["an address", { address: "Storgatan 1" }],
     ["an organisationsnummer", { organizationNumber: "556677-8899" }],
     ["a website", { website: "https://andersson.se" }],
-    ["a personnummer for a private individual", { customerType: "individual", organizationNumber: "19850101-1234" }]
+    ["a personnummer for a private individual", { organizationNumber: "19850101-1234" }]
   ])("rejects %s entered without an organization name", (_label, fields) => {
     const result = meetingStepSchema.safeParse(
       meeting({ organization: { ...BLANK_WIZARD_ORGANIZATION, ...fields } })
@@ -187,7 +186,7 @@ describe("meetingStepSchema (S01, S04)", () => {
   it("accepts a personnummer in the organization identity field", () => {
     const result = meetingStepSchema.safeParse(
       meeting({
-        organization: { name: "Anna Andersson", customerType: "individual", organizationNumber: "19850101-1234" }
+        organization: { name: "Anna Andersson", organizationNumber: "19850101-1234" }
       })
     );
 
@@ -202,20 +201,21 @@ describe("meetingStepSchema (S01, S04)", () => {
   });
 });
 
-/** S05, S11 — deal validation, including private individuals. */
-describe("dealStepSchema (S05, S11)", () => {
+/** S05, S11 — prospect validation, including private individuals. */
+describe("prospectStepSchema (S05, S11)", () => {
   it("accepts an organisationsnummer", () => {
-    const result = dealStepSchema.safeParse(deal());
+    const result = prospectStepSchema.safeParse(prospect());
 
     expect(result.success).toBe(true);
   });
 
-  it("accepts and normalizes a 12-digit personnummer", () => {
-    const result = dealStepSchema.safeParse(
-      deal({
+  it("accepts and normalizes a 12-digit personnummer in the same field", () => {
+    // No separate mode for private individuals: the one identity field takes
+    // both shapes, as the client asked.
+    const result = prospectStepSchema.safeParse(
+      prospect({
         organization: {
           name: "Anna Andersson",
-          customerType: "individual",
           organizationNumber: "19850101-1234",
           website: "https://example.se",
           address: "Storgatan 1"
@@ -228,8 +228,8 @@ describe("dealStepSchema (S05, S11)", () => {
   });
 
   it("requires an identity number", () => {
-    const result = dealStepSchema.safeParse(
-      deal({
+    const result = prospectStepSchema.safeParse(
+      prospect({
         organization: {
           name: "Andersson AB",
           organizationNumber: "",
@@ -247,27 +247,53 @@ describe("dealStepSchema (S05, S11)", () => {
   });
 
   it("requires a contact email", () => {
-    const result = dealStepSchema.safeParse(deal({ person: { name: "Anna Andersson" } }));
+    const result = prospectStepSchema.safeParse(prospect({ person: { name: "Anna Andersson" } }));
 
     expect(result.success).toBe(false);
   });
 
+  it("requires the seller to choose the evidence for QC", () => {
+    const result = prospectStepSchema.safeParse(prospect({ evidenceMethod: undefined }));
+
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error.issues[0].message).toContain("underlag");
+  });
+
+  it("accepts audio as the evidence", () => {
+    expect(prospectStepSchema.safeParse(prospect({ evidenceMethod: "audio" })).success).toBe(true);
+  });
+
+  /**
+   * The title is derived from the organization name on the server, and the
+   * seller is the session. Neither may arrive from the form — if they did they
+   * would be silently ignored, which this test pins down.
+   */
+  it("ignores a title, seller, pipeline or stage sent by a client", () => {
+    const result = prospectStepSchema.safeParse(
+      prospect({ title: "Egen titel", sellerId: 75, pipelineId: "1", stageId: "2" })
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).not.toHaveProperty("title");
+    expect(result.success && result.data).not.toHaveProperty("sellerId");
+    expect(result.success && result.data).not.toHaveProperty("pipelineId");
+  });
+
+  it("uses one date for invoicing and the agreement", () => {
+    const result = prospectStepSchema.safeParse(prospect({ fakturaAvtalStart: "inte-ett-datum" }));
+
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error.issues[0].message).toContain("Faktura/avtal start");
+  });
+
   it("reports every missing required field at once, not just the first", () => {
-    const result = dealStepSchema.safeParse({
+    const result = prospectStepSchema.safeParse({
       person: { name: "" },
-      organization: { name: "", organizationNumber: "" },
-      deal: { title: "", value: 0 }
+      organization: { name: "", organizationNumber: "" }
     });
 
     expect(result.success).toBe(false);
     expect(result.success === false && result.error.issues.length).toBeGreaterThan(1);
-  });
-
-  it("leaves stage optional so the pipeline's first stage can be used (S12)", () => {
-    const result = dealStepSchema.safeParse(deal({ deal: { title: "T", value: 1, pipelineId: "1" } }));
-
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.deal.stageId).toBeUndefined();
   });
 });
 

@@ -1,11 +1,11 @@
 import type { z } from "zod";
 import type {
   contractStepSchema,
-  dealStepSchema,
   mediacleaningStepSchema,
   meetingStepSchema,
   organizationSchema,
   personSchema,
+  prospectStepSchema,
   supplierSchema
 } from "@/lib/crm/schemas";
 
@@ -24,11 +24,9 @@ export type OrganizationRef = z.input<typeof organizationSchema>;
 export type SupplierSelection = z.input<typeof supplierSchema>;
 
 export type MeetingStepData = z.input<typeof meetingStepSchema>;
-export type DealStepData = z.input<typeof dealStepSchema>;
+export type ProspectStepData = z.input<typeof prospectStepSchema>;
 export type MediacleaningStepData = z.input<typeof mediacleaningStepSchema>;
 export type ContractStepData = z.input<typeof contractStepSchema>;
-
-export type DealRef = DealStepData["deal"];
 
 export type UserRef = {
   id: CrmRecordId;
@@ -49,7 +47,7 @@ export type SellerIdentity = {
 
 export type WizardData = {
   meeting?: z.output<typeof meetingStepSchema>;
-  deal?: z.output<typeof dealStepSchema>;
+  prospect?: z.output<typeof prospectStepSchema>;
   mediacleaning?: z.output<typeof mediacleaningStepSchema>;
   contract?: z.output<typeof contractStepSchema>;
 };

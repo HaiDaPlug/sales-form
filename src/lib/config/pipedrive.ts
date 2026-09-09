@@ -81,7 +81,9 @@ export const REQUIRED_CUSTOM_FIELDS: PipedriveCustomFieldName[] = [
   "fakturaStart",
   "fakturagrupp",
   "viktigastForKunden",
-  "affarensSaljare"
+  "affarensSaljare",
+  "underlag",
+  "ursprungligSaljare"
 ];
 
 /** `FOO=` in a .env file means "not configured", not "configured as empty". */

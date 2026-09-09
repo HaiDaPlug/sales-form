@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
+import type { MeetingStepInput, ProspectStepInput } from "@/lib/crm/schemas";
 
 vi.mock("@/lib/pipedrive/client", () => ({
   pipedriveRequest: vi.fn(),
@@ -20,9 +20,8 @@ const {
   DealOwnershipError,
   ExistingRecordProtectionError,
   PartialResolutionError,
-  resolveDealParties,
-  resolveFirstStageId,
-  resolveMeetingParties
+  resolveMeetingParties,
+  resolveProspectParties
 } = await import("@/lib/pipedrive/service");
 
 beforeEach(() => {
@@ -63,36 +62,7 @@ describe("assertDealBelongsToOrganization (S15)", () => {
   });
 });
 
-/** S12 — no stage chosen means the first stage of the selected pipeline. */
-describe("resolveFirstStageId (S12)", () => {
-  it("returns the first stage of the requested pipeline by order", async () => {
-    vi.mocked(pipedriveRequest).mockResolvedValue([
-      { id: 3, name: "Intro Möte", pipeline_id: 1, order_nr: 3 },
-      { id: 1, name: "Välkomstbrev utskick", pipeline_id: 1, order_nr: 1 },
-      { id: 2, name: "Mediacleaning Utskick", pipeline_id: 1, order_nr: 2 }
-    ]);
-
-    await expect(resolveFirstStageId(1)).resolves.toBe(1);
-  });
-
-  it("ignores stages belonging to a different pipeline", async () => {
-    // `order_nr` restarts per pipeline, so a flat first-element read is wrong.
-    vi.mocked(pipedriveRequest).mockResolvedValue([
-      { id: 10, name: "Kvalificerade", pipeline_id: 2, order_nr: 1 },
-      { id: 1, name: "Välkomstbrev utskick", pipeline_id: 1, order_nr: 1 }
-    ]);
-
-    await expect(resolveFirstStageId(1)).resolves.toBe(1);
-  });
-
-  it("returns undefined when the pipeline has no stages", async () => {
-    vi.mocked(pipedriveRequest).mockResolvedValue([]);
-
-    await expect(resolveFirstStageId(1)).resolves.toBeUndefined();
-  });
-});
-
-function dealParties(overrides: Partial<DealStepInput> = {}): DealStepInput {
+function prospectParties(overrides: Partial<ProspectStepInput> = {}): ProspectStepInput {
   return {
     person: {
       id: 11,
@@ -108,18 +78,19 @@ function dealParties(overrides: Partial<DealStepInput> = {}): DealStepInput {
       website: "https://example.se",
       address: "Storgatan 1"
     },
-    deal: { title: "Digital Kontakt", value: 12000, currency: "SEK", pipelineId: 1 },
-    sellerId: 3,
+    value: 12000,
+    currency: "SEK",
+    evidenceMethod: "signature",
     viktigastForKunden: "Synlighet",
-    fakturaStart: "2026-09-01",
+    fakturaAvtalStart: "2026-09-01",
     fakturagrupp: "Standard",
     ...overrides
   };
 }
 
-describe("resolveDealParties CRM protection", () => {
+describe("resolveProspectParties CRM protection", () => {
   it("reuses matching existing records without an update request", async () => {
-    const result = await resolveDealParties(dealParties());
+    const result = await resolveProspectParties(prospectParties());
 
     expect(result.personLinkedToOrganization).toBe(true);
     expect(pipedriveRequest).not.toHaveBeenCalled();
@@ -127,9 +98,9 @@ describe("resolveDealParties CRM protection", () => {
 
   it("refuses to relink a person owned by another organization", async () => {
     await expect(
-      resolveDealParties(
-        dealParties({
-          person: { ...dealParties().person, organizationId: 99 }
+      resolveProspectParties(
+        prospectParties({
+          person: { ...prospectParties().person, organizationId: 99 }
         })
       )
     ).rejects.toBeInstanceOf(ExistingRecordProtectionError);
@@ -138,8 +109,8 @@ describe("resolveDealParties CRM protection", () => {
   });
 
   it("does not mutate an existing unlinked person", async () => {
-    const result = await resolveDealParties(
-      dealParties({ person: { ...dealParties().person, organizationId: undefined } })
+    const result = await resolveProspectParties(
+      prospectParties({ person: { ...prospectParties().person, organizationId: undefined } })
     );
 
     expect(result.personLinkedToOrganization).toBe(false);
@@ -231,7 +202,7 @@ describe("resolveMeetingParties (S01, S03, S04)", () => {
 
     const result = await resolveMeetingParties(
       meetingParties({
-        organization: { name: "Anna Andersson", customerType: "individual", organizationNumber: "850101-1234" }
+        organization: { name: "Anna Andersson", organizationNumber: "850101-1234" }
       })
     );
 
@@ -310,13 +281,13 @@ describe("partial resolution failures preserve created records", () => {
     expect(error.message).toContain("timeout");
   });
 
-  it("keeps the organization id when deal person creation fails", async () => {
+  it("keeps the organization id when prospect person creation fails", async () => {
     vi.mocked(pipedriveRequest)
       .mockResolvedValueOnce({ id: 7 })
       .mockRejectedValueOnce(new Error("timeout"));
 
-    const error = await resolveDealParties(
-      dealParties({
+    const error = await resolveProspectParties(
+      prospectParties({
         person: { name: "Anna Andersson", email: "anna@example.se", phone: "0701234567" },
         organization: {
           name: "Andersson AB",

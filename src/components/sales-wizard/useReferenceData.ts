@@ -5,13 +5,6 @@ import type { ReferenceOption } from "@/lib/pipedrive/types";
 
 export type ReferenceData = {
   users: ReferenceOption[];
-  /**
-   * The "Affärens säljare" options — kept separate from `users` because they are
-   * custom-field options, not accounts, and the two are not interchangeable.
-   */
-  sellers: ReferenceOption[];
-  pipelines: ReferenceOption[];
-  stages: ReferenceOption[];
   schedulerUrl?: string;
   loading: boolean;
   /** Set when Pipedrive is unreachable or misconfigured, so steps can fall back. */
@@ -21,21 +14,12 @@ export type ReferenceData = {
 /**
  * Loads the Pipedrive reference lists backing the dropdowns.
  *
- * Fetched once in the wizard and passed down, rather than per step — the lists
- * are small, unchanging within a session, and shared by three of the four
- * steps. All three are fetched together so a single failure (e.g. a missing
- * token) surfaces one message instead of three.
- *
- * Stages are fetched unfiltered and filtered client-side by pipeline; they
- * carry `pipelineId` for exactly that reason.
+ * Fetched once in the wizard and passed down rather than per step. Sellers,
+ * pipelines and stages are no longer lists the form offers: the seller is the
+ * session, and a prospect has no pipeline.
  */
 export function useReferenceData(): ReferenceData {
-  const [data, setData] = useState<Omit<ReferenceData, "loading">>({
-    users: [],
-    sellers: [],
-    pipelines: [],
-    stages: []
-  });
+  const [data, setData] = useState<Omit<ReferenceData, "loading">>({ users: [] });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,22 +29,14 @@ export function useReferenceData(): ReferenceData {
       const schedulerPromise = fetchSchedulerUrl().catch(() => undefined);
 
       try {
-        const [users, sellers, pipelines, stages] = await Promise.all([
-          fetchOptions("/api/pipedrive/users"),
-          fetchOptions("/api/pipedrive/sellers"),
-          fetchOptions("/api/pipedrive/pipelines"),
-          fetchOptions("/api/pipedrive/stages")
-        ]);
+        const users = await fetchOptions("/api/pipedrive/users");
 
         if (cancelled) return;
-        setData({ users, sellers, pipelines, stages, schedulerUrl: await schedulerPromise });
+        setData({ users, schedulerUrl: await schedulerPromise });
       } catch (error) {
         if (cancelled) return;
         setData({
           users: [],
-          sellers: [],
-          pipelines: [],
-          stages: [],
           schedulerUrl: await schedulerPromise,
           error: error instanceof Error ? error.message : "Kunde inte hämta listor från Pipedrive"
         });

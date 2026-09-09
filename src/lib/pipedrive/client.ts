@@ -2,9 +2,15 @@ import { assertPipedriveToken, getPipedriveConfig } from "@/lib/config/pipedrive
 import type { PipedriveResponse } from "@/lib/pipedrive/types";
 
 type RequestOptions = {
-  // Intentionally creation/read-only: this app must not update or delete
-  // existing CRM records. Adding PUT/PATCH/DELETE requires an explicit policy change.
-  method?: "GET" | "POST";
+  /**
+   * Creation and reads, plus one update: `PATCH` exists only so the portal can
+   * advance a prospect's "Underlag" after an upload completes. Existing CRM
+   * records are otherwise never modified, and nothing is ever deleted — adding
+   * another write path is a policy change, not a convenience.
+   */
+  method?: "GET" | "POST" | "PATCH";
+  /** Lead search and the converted-deal lookup only exist on the v2 API. */
+  version?: "v1" | "v2";
   query?: Record<string, string | number | undefined>;
   body?: unknown;
   formData?: FormData;
@@ -27,7 +33,8 @@ export class PipedriveApiError extends Error {
 export async function pipedriveRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const config = getPipedriveConfig();
   const token = assertPipedriveToken(config);
-  const url = new URL(`${config.apiBaseUrl}${path}`);
+  const base = options.version === "v2" ? config.apiV2BaseUrl : config.apiBaseUrl;
+  const url = new URL(`${base}${path}`);
 
   for (const [key, value] of Object.entries(options.query ?? {})) {
     if (value !== undefined && value !== "") {
