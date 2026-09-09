@@ -26,6 +26,7 @@ import {
   initialProspect
 } from "@/components/sales-wizard/initialState";
 import { useReferenceData } from "@/components/sales-wizard/useReferenceData";
+import { uploadProspectAudio } from "@/components/sales-wizard/uploadAudio";
 import { downloadBlob, formatZodErrors, readRecordId } from "@/components/sales-wizard/utils";
 
 /** The four workflows, in order. `action` is the label of the button that runs one. */
@@ -56,6 +57,7 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   /** The Pipedrive lead this session created, once it exists. */
   const [createdLeadId, setCreatedLeadId] = useState<string | undefined>(undefined);
+  const [audioUploaded, setAudioUploaded] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
   const [stepResults, setStepResults] = useState<Partial<Record<StepKind, StepResult>>>({});
@@ -67,6 +69,9 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
   const active = STEPS[activeStep];
   const activeResult = stepResults[active.kind];
+  /** The prospect exists but its recording did not reach Pipedrive. */
+  const awaitingAudioRetry =
+    active.kind === "prospect" && Boolean(createdLeadId) && Boolean(audioFile) && !audioUploaded;
 
   const summary = useMemo(
     () => ({
@@ -234,7 +239,37 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       return;
     }
 
+    // The prospect already exists and only its recording failed: retry the
+    // upload rather than creating a second prospect for the same customer.
+    if (createdLeadId && audioFile && !audioUploaded) {
+      await retryAudioUpload(createdLeadId, audioFile);
+      return;
+    }
+
     await validateAndSubmit(prospectStepSchema, prospect, "/api/pipedrive/prospects", "prospect");
+  }
+
+  async function retryAudioUpload(leadId: string, file: File) {
+    setSubmitState({ status: "loading", message: "Laddar upp ljudfilen..." });
+
+    try {
+      const { warning } = await uploadProspectAudio(leadId, file);
+      const message =
+        warning ?? "Ljudfilen är uppladdad och prospektet har status Ljudfil uppladdad i Pipedrive.";
+
+      setAudioUploaded(true);
+      setStepResults((current) => ({
+        ...current,
+        prospect: { completedAt: new Date().toISOString(), message }
+      }));
+      setSubmitState({ status: "success", message });
+      setHistoryToken((token) => token + 1);
+    } catch (error) {
+      setSubmitState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Ljudfilen kunde inte laddas upp."
+      });
+    }
   }
 
   async function submitCurrentStep() {
@@ -365,10 +400,31 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       if (parties) applyResolvedParties(parties);
       setCreatedLeadId(recordId);
 
-      const warning = (result.data as { _warning?: string })?._warning;
+      const warnings = [(result.data as { _warning?: string })?._warning];
       const title = prospectTitle(prospect.organization.name);
 
-      return `${title} är skapat i Pipedrive och kopplat till kontakt och organisation.${warning ? ` ${warning}` : ""}`;
+      // The recording follows the prospect, because a file needs the lead id
+      // to attach to. The prospect exists from here on, so a failed upload is
+      // reported against it rather than presented as a failed creation — the
+      // seller retries the upload alone.
+      if (prospect.evidenceMethod === "audio" && audioFile) {
+        try {
+          const { warning } = await uploadProspectAudio(recordId, audioFile);
+          warnings.push(warning ?? "Ljudfilen är uppladdad och prospektet har status Ljudfil uppladdad.");
+          setAudioUploaded(true);
+        } catch (error) {
+          warnings.push(
+            `${title} är skapat, men ljudfilen kunde inte laddas upp: ${
+              error instanceof Error ? error.message : String(error)
+            } Prospektet ligger kvar — ladda upp filen igen utan att skapa prospektet på nytt.`
+          );
+        }
+      }
+
+      return [
+        `${title} är skapat i Pipedrive och kopplat till kontakt och organisation.`,
+        ...warnings.filter(Boolean)
+      ].join(" ");
     }
 
     return "Steget är skickat.";
@@ -592,8 +648,10 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
                     {checkingOverlaps
                       ? "Kontrollerar tiden..."
                       : submitState.status === "loading"
-                        ? "Skickar..."
-                        : active.action}
+                        ? submitState.message ?? "Skickar..."
+                        : awaitingAudioRetry
+                          ? "Ladda upp ljudfilen igen"
+                          : active.action}
                   </button>
                 )}
                 <button
