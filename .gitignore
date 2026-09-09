@@ -11,6 +11,9 @@ coverage/
 .env.local
 .env.*.local
 
+# Seller passwords, handed out once and then deleted. Never committed.
+.seller-credentials.txt
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

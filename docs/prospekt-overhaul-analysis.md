@@ -32,7 +32,8 @@ straightforward and will be built as written.
 
 ### The client's account (from `current_state.md`)
 
-- The four sellers (Filippa, Robin, Adam Westin, Tobias Ek) are **options 72–75 on
+- The four sellers (Filippa, Robin, Adam Westin, Daniel Krans — option 75 was
+  recorded as "Tobias Ek" in August and has since changed) are **options 72–75 on
   the custom deal field "Affärens säljare"**. They have no Pipedrive login. Pipedrive
   users are two service accounts, one deactivated user and Roble.
 - The account has **zero custom activity fields**; a meeting's seller lives on the

@@ -45,7 +45,7 @@ const dealFields = [
       { id: 72, label: "Filippa" },
       { id: 73, label: "Robin" },
       { id: 74, label: "Adam Westin" },
-      { id: 75, label: "Tobias Ek" }
+      { id: 75, label: "Daniel Krans" }
     ]
   }
 ];
@@ -58,7 +58,7 @@ describe("getSellers", () => {
       { id: 72, name: "Filippa" },
       { id: 73, name: "Robin" },
       { id: 74, name: "Adam Westin" },
-      { id: 75, name: "Tobias Ek" }
+      { id: 75, name: "Daniel Krans" }
     ]);
   });
 

@@ -62,7 +62,73 @@ portal writes a status describing someone else's action.
 
 - `npm test` — **391/391 across 27 files**.
 - `npm run typecheck`, `npm run lint`, `npm run build` — all pass.
-- Nothing has been run against the live Pipedrive account yet.
+
+### The database and the seller accounts exist now
+
+Neon project **`sales-form`** (`misty-sky-76224905`, aws-eu-west-2, Postgres 18)
+is connected through the pooled URL in `.env.local`. Verified against the live
+database, not mocks: `ensureSchema` created `history` and `suppliers`, a
+history row round-tripped with its identity number redacted and was invisible
+to a second seller, all 64 suppliers seeded, a new supplier saved and a
+duplicate organisationsnummer was refused. The verification rows were deleted;
+the seeded supplier list is what remains.
+
+The four seller accounts are in `APP_USERS`, each bound to its option id, and
+all four were checked end to end: every account logs in, its session carries
+the right option, the name matches what Pipedrive returns for that option, and
+both a wrong password and a colleague's password are refused. Passwords are in
+`.seller-credentials.txt` — gitignored, to be handed out once and then deleted.
+
+`APP_ACCESS_PASSWORD` was removed from `.env.local`: the shared-password gate
+no longer exists.
+
+**Option 75 is Daniel Krans, not Tobias Ek.** The August entry below recorded
+the latter; the field has changed since. `seller.test.ts` now matches the live
+account.
+
+### Still unset in `.env.local`, and what each blocks
+
+| Key | Blocks |
+| --- | --- |
+| `PIPEDRIVE_FIELD_UNDERLAG` | prospect creation (fails loudly, by design) |
+| `PIPEDRIVE_FIELD_URSPRUNGLIG_SALJARE` | prospect creation, same |
+| `PIPEDRIVE_LEAD_OWNER_USER_ID` | nothing; prospects fall to the token's user |
+| `PIPEDRIVE_TECHNICIAN_USER_IDS` | nothing; every booking blocks one shared slot pool |
+| `BLOB_READ_WRITE_TOKEN` | audio on Vercel; local dev posts direct to the route |
+
+Neither custom field exists in the account yet — confirmed live. An
+administrator has to create them before a prospect can be created at all.
+
+### Two assumptions in the code that live data has not tested
+
+Both are decisions taken from documentation alone, and both are cheap to check
+once the account is reachable. They are recorded here because each will look
+like a different bug if it is wrong.
+
+**1. One file upload, two records.** `attachAudioToProspect`
+(`src/lib/prospects/audio.ts`) sends a single `POST /files` carrying both
+`lead_id` and `org_id`, on the reading that Pipedrive links it to both. The
+parameters are documented; the resulting visibility is not. Upload a short
+recording and look at the prospect *and* the organization in their UI.
+
+If it only lands on one, the fix is two uploads from the same buffer, and the
+status must still follow the *last* successful one — the ordering guarantee
+("Ljudfil uppladdad" only after Pipedrive confirms) has to survive the change.
+Symptom if unnoticed: QC opens the organization and finds no recording, while
+the portal reports the evidence as uploaded.
+
+**2. The status page reads one page of deals.** `listDealsWithSourceLead`
+(`src/lib/pipedrive/service.ts`) fetches 500 and stops. Pipedrive v2 pages by
+an opaque cursor in the response envelope, which `pipedriveRequest` unwraps
+away before the caller sees it — so paging needs the client to surface
+`additional_data.next_cursor` first, not just another loop here.
+
+500 is well past one seller's book, but it is an account-wide read: the cap
+bites when the *account* passes 500 deals, not when a seller does. Symptom if
+unnoticed: a converted prospect quietly shows as "Väntar på kvalitetskontroll"
+forever, because the deal it became fell outside the page and
+`source_lead_id` never matched. Silent and wrong, which is why it is here
+rather than in a comment alone.
 
 ### Open items, in the order they block things
 
@@ -70,9 +136,7 @@ portal writes a status describing someone else's action.
    technician pool; the two new custom fields ("Underlag" with exactly the four
    options in `src/lib/crm/prospect.ts`, "Ursprunglig säljare") and their keys.
    Prospect creation fails loudly without them, by design.
-2. **One live check worth doing first:** whether a single `/files` upload
-   carrying both `lead_id` and `org_id` shows on both records in their account,
-   or whether it needs one upload per record.
+2. **The two live checks above**, once the account is reachable.
 3. **Supplier organisationsnummer.** 63 of the 64 shipped suppliers have none;
    they are blank rather than guessed, and the letter omits the line.
 4. **Smart Docs template.** Confirm the organization-level template can carry
@@ -91,9 +155,6 @@ portal writes a status describing someone else's action.
 - Each enum field has its **own** option ids: "Ursprunglig säljare" lists the
   same four names under different numbers than "Affärens säljare", so the
   seller is mapped through the label, never copied.
-- The status page's deal listing reads one page of 500. Pipedrive v2 pages by
-  an opaque cursor that this client's response unwrapping discards; a larger
-  account needs that plumbed through.
 
 
 ## 2026-08-27 — Seller field bound to Pipedrive, booking-overlap warning added; 233 tests pass
