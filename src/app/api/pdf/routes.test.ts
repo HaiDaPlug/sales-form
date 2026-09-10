@@ -9,7 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * second upload — and, for Mediacleaning, a second organization.
  */
 vi.mock("@/lib/auth/server", () => ({
-  requireSession: vi.fn(async () => ({ subject: "Roble" })),
+  requireSession: vi.fn(async () => ({ subject: "Roble", username: "roble", sellerOptionId: 73 })),
+  sellerFromSession: (session: { subject: string; sellerOptionId: number }) => ({
+    optionId: session.sellerOptionId,
+    name: session.subject
+  }),
   UnauthorizedError: class UnauthorizedError extends Error {}
 }));
 
@@ -20,11 +24,16 @@ vi.mock("@/lib/history/store", () => ({
 
 vi.mock("@/lib/pipedrive/attachment", () => ({
   attachDocument: vi.fn(),
-  attachmentHeaders: vi.fn(() => ({ "X-Attachment-Target": "deal" }))
+  attachmentHeaders: vi.fn(() => ({ "X-Attachment-Target": "organization" }))
+}));
+
+vi.mock("@/lib/pipedrive/service", () => ({
+  requestSignatureTask: vi.fn()
 }));
 
 const { recordHistorySafely } = await import("@/lib/history/store");
 const { attachDocument } = await import("@/lib/pipedrive/attachment");
+const { requestSignatureTask } = await import("@/lib/pipedrive/service");
 const { POST: mediacleaningPost } = await import("@/app/api/pdf/mediacleaning/route");
 const { POST: contractPost } = await import("@/app/api/pdf/contract/route");
 
@@ -41,8 +50,10 @@ const mediacleaningBody = {
   organizationNumber: "556677-8899",
   address: "Storgatan 1",
   city: "Stockholm",
+  signerName: "Anna Andersson",
   documentTypes: ["cancellation"],
   suppliers: [{ name: "Eniro Group AB", noticeAddress: "Box 100, 111 11 Stockholm" }],
+  organizationId: 7,
   dealId: 42
 };
 
@@ -52,20 +63,21 @@ const contractBody = {
     organizationNumber: "556677-8899",
     signerName: "Anna Andersson",
     address: "Storgatan 1",
-    sellerName: "Roble",
     price: 1200,
     paymentInterval: "monthly",
     bindingPeriodMonths: 12,
     includedServices: ["Digital Kontakt"],
-    dealId: 42
+    organizationId: 7,
+    leadId: "lead-1"
   }
 };
 
 beforeEach(() => {
   vi.mocked(recordHistorySafely).mockReset().mockResolvedValue(undefined);
+  vi.mocked(requestSignatureTask).mockReset().mockResolvedValue({});
   vi.mocked(attachDocument)
     .mockReset()
-    .mockResolvedValue({ target: { kind: "deal", dealId: 42 }, fileId: 800, noteId: 900 });
+    .mockResolvedValue({ organizationId: 7, noteTarget: { kind: "lead", leadId: "lead-1" }, fileId: 800, noteId: 900 });
 });
 
 describe.each([
@@ -101,7 +113,6 @@ describe.each([
 
   it("still returns the document when the attachment failed", async () => {
     vi.mocked(attachDocument).mockResolvedValue({
-      target: { kind: "none" },
       warning: "Kunde inte kopplas i Pipedrive."
     });
 
@@ -113,7 +124,6 @@ describe.each([
 
   it("records a failed attachment as a warning, not an error", async () => {
     vi.mocked(attachDocument).mockResolvedValue({
-      target: { kind: "none" },
       warning: "Kunde inte kopplas i Pipedrive."
     });
 
@@ -122,10 +132,12 @@ describe.each([
     expect(recordHistorySafely).toHaveBeenCalledWith(expect.objectContaining({ status: "warning" }));
   });
 
-  it("records a successful run as success", async () => {
+  it("records a successful run as success, scoped to the session's seller", async () => {
     await handler(request(body));
 
-    expect(recordHistorySafely).toHaveBeenCalledWith(expect.objectContaining({ status: "success" }));
+    expect(recordHistorySafely).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "success", createdBy: "Roble", sellerOptionId: 73 })
+    );
   });
 
   it("rejects an invalid submission before generating anything", async () => {

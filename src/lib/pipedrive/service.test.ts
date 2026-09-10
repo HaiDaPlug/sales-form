@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DealStepInput, MeetingStepInput } from "@/lib/crm/schemas";
+import type { MeetingStepInput, ProspectStepInput } from "@/lib/crm/schemas";
 
 vi.mock("@/lib/pipedrive/client", () => ({
   pipedriveRequest: vi.fn(),
@@ -20,9 +20,8 @@ const {
   DealOwnershipError,
   ExistingRecordProtectionError,
   PartialResolutionError,
-  resolveDealParties,
-  resolveFirstStageId,
-  resolveMeetingParties
+  resolveMeetingParties,
+  resolveProspectParties
 } = await import("@/lib/pipedrive/service");
 
 beforeEach(() => {
@@ -63,36 +62,7 @@ describe("assertDealBelongsToOrganization (S15)", () => {
   });
 });
 
-/** S12 — no stage chosen means the first stage of the selected pipeline. */
-describe("resolveFirstStageId (S12)", () => {
-  it("returns the first stage of the requested pipeline by order", async () => {
-    vi.mocked(pipedriveRequest).mockResolvedValue([
-      { id: 3, name: "Intro Möte", pipeline_id: 1, order_nr: 3 },
-      { id: 1, name: "Välkomstbrev utskick", pipeline_id: 1, order_nr: 1 },
-      { id: 2, name: "Mediacleaning Utskick", pipeline_id: 1, order_nr: 2 }
-    ]);
-
-    await expect(resolveFirstStageId(1)).resolves.toBe(1);
-  });
-
-  it("ignores stages belonging to a different pipeline", async () => {
-    // `order_nr` restarts per pipeline, so a flat first-element read is wrong.
-    vi.mocked(pipedriveRequest).mockResolvedValue([
-      { id: 10, name: "Kvalificerade", pipeline_id: 2, order_nr: 1 },
-      { id: 1, name: "Välkomstbrev utskick", pipeline_id: 1, order_nr: 1 }
-    ]);
-
-    await expect(resolveFirstStageId(1)).resolves.toBe(1);
-  });
-
-  it("returns undefined when the pipeline has no stages", async () => {
-    vi.mocked(pipedriveRequest).mockResolvedValue([]);
-
-    await expect(resolveFirstStageId(1)).resolves.toBeUndefined();
-  });
-});
-
-function dealParties(overrides: Partial<DealStepInput> = {}): DealStepInput {
+function prospectParties(overrides: Partial<ProspectStepInput> = {}): ProspectStepInput {
   return {
     person: {
       id: 11,
@@ -108,18 +78,19 @@ function dealParties(overrides: Partial<DealStepInput> = {}): DealStepInput {
       website: "https://example.se",
       address: "Storgatan 1"
     },
-    deal: { title: "Digital Kontakt", value: 12000, currency: "SEK", pipelineId: 1 },
-    sellerId: 3,
+    value: 12000,
+    currency: "SEK",
+    evidenceMethod: "signature",
     viktigastForKunden: "Synlighet",
-    fakturaStart: "2026-09-01",
+    fakturaAvtalStart: "2026-09-01",
     fakturagrupp: "Standard",
     ...overrides
   };
 }
 
-describe("resolveDealParties CRM protection", () => {
+describe("resolveProspectParties CRM protection", () => {
   it("reuses matching existing records without an update request", async () => {
-    const result = await resolveDealParties(dealParties());
+    const result = await resolveProspectParties(prospectParties());
 
     expect(result.personLinkedToOrganization).toBe(true);
     expect(pipedriveRequest).not.toHaveBeenCalled();
@@ -127,9 +98,9 @@ describe("resolveDealParties CRM protection", () => {
 
   it("refuses to relink a person owned by another organization", async () => {
     await expect(
-      resolveDealParties(
-        dealParties({
-          person: { ...dealParties().person, organizationId: 99 }
+      resolveProspectParties(
+        prospectParties({
+          person: { ...prospectParties().person, organizationId: 99 }
         })
       )
     ).rejects.toBeInstanceOf(ExistingRecordProtectionError);
@@ -138,8 +109,8 @@ describe("resolveDealParties CRM protection", () => {
   });
 
   it("does not mutate an existing unlinked person", async () => {
-    const result = await resolveDealParties(
-      dealParties({ person: { ...dealParties().person, organizationId: undefined } })
+    const result = await resolveProspectParties(
+      prospectParties({ person: { ...prospectParties().person, organizationId: undefined } })
     );
 
     expect(result.personLinkedToOrganization).toBe(false);
@@ -231,7 +202,7 @@ describe("resolveMeetingParties (S01, S03, S04)", () => {
 
     const result = await resolveMeetingParties(
       meetingParties({
-        organization: { name: "Anna Andersson", customerType: "individual", organizationNumber: "850101-1234" }
+        organization: { name: "Anna Andersson", organizationNumber: "850101-1234" }
       })
     );
 
@@ -310,13 +281,13 @@ describe("partial resolution failures preserve created records", () => {
     expect(error.message).toContain("timeout");
   });
 
-  it("keeps the organization id when deal person creation fails", async () => {
+  it("keeps the organization id when prospect person creation fails", async () => {
     vi.mocked(pipedriveRequest)
       .mockResolvedValueOnce({ id: 7 })
       .mockRejectedValueOnce(new Error("timeout"));
 
-    const error = await resolveDealParties(
-      dealParties({
+    const error = await resolveProspectParties(
+      prospectParties({
         person: { name: "Anna Andersson", email: "anna@example.se", phone: "0701234567" },
         organization: {
           name: "Andersson AB",
@@ -368,45 +339,37 @@ describe("partial resolution failures preserve created records", () => {
   });
 });
 
+/** The logged-in seller, as the route reads it from the session. */
+const seller = { optionId: 74, name: "Adam Westin" };
+const parties = { personId: 11, createdPerson: true, createdOrganization: false };
+
 describe("buildMeetingActivityPayload", () => {
   it("converts Stockholm summer time to UTC for Pipedrive Calendar", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ date: "2026-08-19", time: "16:10" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties({ date: "2026-08-19", time: "16:10" }), parties, seller);
 
     expect(payload.due_date).toBe("2026-08-19");
     expect(payload.due_time).toBe("14:10");
   });
 
   it("converts Stockholm winter time with the standard-time offset", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ date: "2026-01-19", time: "16:10" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties({ date: "2026-01-19", time: "16:10" }), parties, seller);
 
     expect(payload.due_date).toBe("2026-01-19");
     expect(payload.due_time).toBe("15:10");
   });
 
   it("moves the Pipedrive due date back when UTC conversion crosses midnight", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ date: "2026-06-02", time: "00:30" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties({ date: "2026-06-02", time: "00:30" }), parties, seller);
 
     expect(payload.due_date).toBe("2026-06-01");
     expect(payload.due_time).toBe("22:30");
   });
 
-  it("folds agenda, technician notes and internal comment into one note", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ internalComment: "Ring först" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+  it("folds seller, agenda, technician notes and internal comment into one note", () => {
+    const payload = buildMeetingActivityPayload(meetingParties({ internalComment: "Ring först" }), parties, seller);
 
     expect(payload.note).toBe(
-      ["Genomgång", "IT-tekniker: Ta med demokonto", "Internt: Ring först"].join("\n\n")
+      ["Säljare: Adam Westin", "Genomgång", "IT-tekniker: Ta med demokonto", "Internt: Ring först"].join("\n\n")
     );
     expect(payload.location).toBe("Teams");
   });
@@ -417,57 +380,36 @@ describe("buildMeetingActivityPayload", () => {
    * made Pipedrive reject the booking as an unknown user.
    */
   it("names the seller in the note rather than owning the activity with them", () => {
-    const payload = buildMeetingActivityPayload(
-      meetingParties({ sellerId: 74, sellerName: "Adam Westin" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
-    );
+    const payload = buildMeetingActivityPayload(meetingParties(), parties, seller);
 
     expect(payload.user_id).toBeUndefined();
-    expect(payload.note).toBe(
-      ["Säljare: Adam Westin", "Genomgång", "IT-tekniker: Ta med demokonto"].join("\n\n")
-    );
-  });
-
-  it("leaves the note free of a seller line when none was chosen", () => {
-    const payload = buildMeetingActivityPayload(meetingParties(), {
-      personId: 11,
-      createdPerson: true,
-      createdOrganization: false
-    });
-
-    expect(payload.note).not.toContain("Säljare:");
+    expect(payload.note?.startsWith("Säljare: Adam Westin")).toBe(true);
   });
 
   it("names the activity after the meeting type", () => {
-    const payload = buildMeetingActivityPayload(meetingParties(), {
-      personId: 11,
-      createdPerson: true,
-      createdOrganization: false
-    });
+    const payload = buildMeetingActivityPayload(meetingParties(), parties, seller);
 
     expect(payload.subject).toBe("Möte: IT-genomgång");
   });
 
   it("falls back to a plain subject when no meeting type was given", () => {
-    const payload = buildMeetingActivityPayload(meetingParties({ meetingType: "" }), {
-      personId: 11,
-      createdPerson: true,
-      createdOrganization: false
-    });
+    const payload = buildMeetingActivityPayload(meetingParties({ meetingType: "" }), parties, seller);
 
     // "Möte: " with nothing after it is what a blank type used to produce.
     expect(payload.subject).toBe("Möte");
   });
 
-  it("omits the note and location rather than writing them blank", () => {
-    // All three are optional, so a meeting booked without them must not stamp
-    // empty values onto the Pipedrive activity.
+  it("omits the location rather than writing it blank, and keeps the note to the seller line", () => {
+    // Agenda, notes and location are optional, so a meeting booked without them
+    // must not stamp empty values onto the Pipedrive activity. The seller line
+    // is always there: the session always has one.
     const payload = buildMeetingActivityPayload(
       meetingParties({ agenda: "", technicianNotes: "", locationOrLink: "" }),
-      { personId: 11, createdPerson: true, createdOrganization: false }
+      parties,
+      seller
     );
 
-    expect(payload.note).toBeUndefined();
+    expect(payload.note).toBe("Säljare: Adam Westin");
     expect(payload.location).toBeUndefined();
   });
 });

@@ -1,59 +1,88 @@
 import { getEnv } from "@/lib/config/env";
+import { verifyPassword } from "@/lib/auth/password";
+import { findPortalUser, getPortalUsers, type PortalUser } from "@/lib/auth/users";
 
 export const SESSION_COOKIE_NAME = "dk_session";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
 
 /**
- * Shared-password gate for internal use.
+ * Per-seller accounts, signed into a cookie.
  *
- * Deliberately narrow: `verifyCredentials` is the only place that decides who
- * gets in, and `getSessionSubject` is the only place that names them. Swapping
- * this for SSO/OAuth later means replacing those two functions and the login
- * form — the proxy, cookie handling, and every route stay as they are.
+ * The payload is the seller's identity for every later request: `subject` is
+ * the display name that labels history entries and contracts, and
+ * `sellerOptionId` is the "Affärens säljare" option that scopes prospects,
+ * meetings and the status page. Neither is ever read from a request body — a
+ * route that needs the seller reads the session.
+ *
+ * `verifyCredentials` is the only place that decides who gets in. Swapping the
+ * password check for SSO later means replacing that function and the login
+ * form; the proxy, cookie handling and every route stay as they are.
  */
 export type SessionPayload = {
+  /** Display name. */
   subject: string;
+  username: string;
+  sellerOptionId: string | number;
   issuedAt: number;
   expiresAt: number;
 };
 
 export function isAuthConfigured(): boolean {
   const env = getEnv();
-  return Boolean(env.APP_ACCESS_PASSWORD && env.APP_SESSION_SECRET);
+
+  if (!env.APP_SESSION_SECRET) return false;
+
+  try {
+    return getPortalUsers().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export function assertAuthConfigured() {
   const env = getEnv();
 
-  if (!env.APP_ACCESS_PASSWORD) {
-    throw new Error("Missing APP_ACCESS_PASSWORD. Add it to .env.local.");
-  }
-
   if (!env.APP_SESSION_SECRET) {
     throw new Error("Missing APP_SESSION_SECRET. Add a random string of at least 16 characters to .env.local.");
   }
+
+  if (getPortalUsers().length === 0) {
+    throw new Error("Missing APP_USERS. Add at least one seller account to .env.local.");
+  }
 }
 
-/** The single decision point for "is this person allowed in". */
-export function verifyCredentials(input: { name: string; password: string }): boolean {
-  const env = getEnv();
+/**
+ * The single decision point for "is this person allowed in".
+ *
+ * An unknown username still runs one password verification, so the response
+ * time does not reveal which usernames exist.
+ */
+export function verifyCredentials(input: { username: string; password: string }): PortalUser | null {
+  const user = findPortalUser(input.username);
 
-  if (!env.APP_ACCESS_PASSWORD) return false;
+  if (!user) {
+    verifyPassword(input.password, UNKNOWN_USER_HASH);
+    return null;
+  }
 
-  return timingSafeEqual(input.password, env.APP_ACCESS_PASSWORD);
+  return verifyPassword(input.password, user.passwordHash) ? user : null;
 }
 
-/** The single decision point for "who is this person" — used to attribute history. */
-export function getSessionSubject(input: { name: string }): string {
-  return input.name.trim() || "Okänd användare";
-}
+/** A well-formed hash no password matches; costs the same as a real check. */
+const UNKNOWN_USER_HASH = `scrypt$${"00".repeat(16)}$${"00".repeat(64)}`;
 
-export async function createSessionToken(subject: string): Promise<string> {
+export async function createSessionToken(user: {
+  subject: string;
+  username: string;
+  sellerOptionId: string | number;
+}): Promise<string> {
   assertAuthConfigured();
 
   const issuedAt = Date.now();
   const payload: SessionPayload = {
-    subject,
+    subject: user.subject,
+    username: user.username,
+    sellerOptionId: user.sellerOptionId,
     issuedAt,
     expiresAt: issuedAt + SESSION_MAX_AGE_SECONDS * 1000
   };
@@ -74,14 +103,24 @@ export async function verifySessionToken(token: string | undefined): Promise<Ses
   if (!timingSafeEqual(signature, expected)) return null;
 
   try {
-    const payload = JSON.parse(base64UrlDecode(body)) as SessionPayload;
+    const payload = JSON.parse(base64UrlDecode(body)) as Partial<SessionPayload>;
+
     if (typeof payload.expiresAt !== "number" || payload.expiresAt < Date.now()) return null;
     if (typeof payload.subject !== "string" || payload.subject.length === 0) return null;
+    if (typeof payload.username !== "string" || payload.username.length === 0) return null;
+    // A cookie from before seller accounts existed has no option id and cannot
+    // scope anything; it is simply expired.
+    if (!isRecordId(payload.sellerOptionId)) return null;
+    if (typeof payload.issuedAt !== "number") return null;
 
-    return payload;
+    return payload as SessionPayload;
   } catch {
     return null;
   }
+}
+
+function isRecordId(value: unknown): value is string | number {
+  return (typeof value === "string" && value.length > 0) || (typeof value === "number" && Number.isFinite(value));
 }
 
 /**

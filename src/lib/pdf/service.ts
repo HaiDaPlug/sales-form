@@ -6,6 +6,7 @@ import {
   type PDFPage
 } from "pdf-lib";
 import type { ContractStepInput, MediacleaningStepInput } from "@/lib/crm/schemas";
+import type { SellerIdentity } from "@/lib/crm/types";
 import {
   draftMediacleaningTemplate,
   type MediacleaningTemplate
@@ -47,14 +48,20 @@ export async function generateMediacleaningPdf(
 
       writer.heading("Mottagare");
       writer.keyValue("Företag", supplier.name);
+      // Blank for most of the shipped list until the client supplies the
+      // numbers; `keyValue` omits an empty value rather than printing a label
+      // with nothing after it.
+      writer.keyValue("Organisationsnummer", supplier.organizationNumber);
       writer.keyValue("Adress", supplier.noticeAddress);
       if (supplier.email) writer.keyValue("E-post", supplier.email);
-      if (supplier.customerNumber) writer.keyValue("Kundnummer", supplier.customerNumber);
 
       writer.heading("Kund");
       writer.keyValue("Namn/företagsnamn", data.companyName);
+      // The customer's identity number is what the supplier matches the
+      // cancellation to; there is no customer number any more.
       writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
       writer.keyValue("Adress", `${data.address}, ${data.city}`);
+      writer.keyValue("Firmatecknare", data.signerName);
 
       writer.heading("Uppsägning");
       template.cancellation.paragraphs(data, supplier).forEach((paragraph) => writer.paragraph(paragraph));
@@ -63,7 +70,7 @@ export async function generateMediacleaningPdf(
         writer.paragraph(supplier.comment);
       }
 
-      writer.signature(template.cancellation.signatureLabel, data.companyName);
+      writer.signature(template.cancellation.signatureLabel, data.signerName);
     });
   }
 
@@ -74,15 +81,14 @@ export async function generateMediacleaningPdf(
     writer.keyValue("Namn/företagsnamn", data.companyName);
     writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
     writer.keyValue("Adress", `${data.address}, ${data.city}`);
+    writer.keyValue("Firmatecknare", data.signerName);
 
     writer.heading(template.agreementSummary.supplierHeading);
     if (data.suppliers.length === 0) {
       writer.paragraph(template.agreementSummary.noSuppliersText);
     } else {
       data.suppliers.forEach((supplier) => {
-        const details = [supplier.customerNumber ? `kundnummer ${supplier.customerNumber}` : "", supplier.noticeAddress]
-          .filter(Boolean)
-          .join(" - ");
+        const details = [supplier.organizationNumber, supplier.noticeAddress].filter(Boolean).join(" - ");
         writer.bullet(details ? `${supplier.name} - ${details}` : supplier.name);
       });
     }
@@ -119,8 +125,13 @@ export function combinedContractFileName(companyName: string): string {
   return `Avtal_och_Mediacleaning_${sanitizeFileNamePart(companyName)}_${today()}_utkast.pdf`;
 }
 
-/** Creates the documented Digital Kontakt contract-summary structure as PDF. */
-export async function generateContractPdf(data: ContractStepInput): Promise<GeneratedDocument> {
+/**
+ * Creates the documented Digital Kontakt contract-summary structure as PDF.
+ *
+ * The seller printed on it is the logged-in seller, passed in by the route
+ * from the session, so the document can never name a colleague.
+ */
+export async function generateContractPdf(data: ContractStepInput, seller: SellerIdentity): Promise<GeneratedDocument> {
   const document = await PDFDocument.create();
   const writer = await PdfWriter.create(document);
 
@@ -133,7 +144,7 @@ export async function generateContractPdf(data: ContractStepInput): Promise<Gene
   writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
   writer.keyValue("Kundens adress", data.address);
   writer.keyValue("Firmatecknare/kontaktperson", data.signerName);
-  writer.keyValue("Ansvarig säljare", data.sellerName);
+  writer.keyValue("Ansvarig säljare", seller.name);
 
   writer.heading("Avtalets omfattning");
   writer.paragraph(
@@ -158,7 +169,7 @@ export async function generateContractPdf(data: ContractStepInput): Promise<Gene
     "Genom underskrift bekräftar parterna att uppgifterna ovan har kontrollerats och att den slutliga avtalstexten har godkänts."
   );
   writer.signature("För kunden", data.signerName);
-  writer.signature("För Digital Kontakt Sverige AB", data.sellerName);
+  writer.signature("För Digital Kontakt Sverige AB", seller.name);
 
   return writer.finish(`Avtal_${sanitizeFileNamePart(data.companyName)}_${today()}_utkast.pdf`);
 }
@@ -170,6 +181,7 @@ export function buildMediacleaningNote(data: MediacleaningStepInput, fileName: s
     "Mediacleaning genomförd",
     `Datum: ${today()}`,
     `Kund: ${data.companyName} (${data.organizationNumber})`,
+    `Firmatecknare: ${data.signerName}`,
     `Dokument: ${data.documentTypes.map(documentTypeLabel).join(", ")}`,
     `Leverantörer: ${suppliers.length > 0 ? suppliers.join(", ") : "-"}`,
     `Fil: ${fileName}`,
@@ -179,7 +191,7 @@ export function buildMediacleaningNote(data: MediacleaningStepInput, fileName: s
     .join("\n");
 }
 
-export function buildContractNote(data: ContractStepInput, fileName: string): string {
+export function buildContractNote(data: ContractStepInput, seller: SellerIdentity, fileName: string): string {
   return [
     "Avtalssammanställning genererad",
     `Datum: ${today()}`,
@@ -188,7 +200,7 @@ export function buildContractNote(data: ContractStepInput, fileName: string): st
     `Pris: ${data.price}`,
     `Betalningsintervall: ${paymentIntervalLabel(data.paymentInterval)}`,
     `Bindningstid: ${data.bindingPeriodMonths} månader`,
-    `Säljare: ${data.sellerName}`,
+    `Säljare: ${seller.name}`,
     `Fil: ${fileName}`
   ].join("\n");
 }

@@ -1,5 +1,184 @@
 # Current State
 
+## 2026-09-09 — Prospect overhaul: the form no longer creates deals; 391 tests pass
+
+The client's technician delivered a five-page change document after testing.
+The core of it: the form must stop creating Pipedrive deals and create
+**prospects** instead, which a separate employee quality-checks and converts
+inside Pipedrive. Two independent analyses (this one and GPT 5.6's) were
+reconciled before any code changed; the mapping and the verified API facts are
+in `docs/prospekt-overhaul-analysis.md`.
+
+Eight commits on `feat/prospekt-overhaul`, one per phase, each verified.
+
+### The model
+
+A prospect is a Pipedrive **Lead**. Leads inherit deal custom fields, so the
+invoicing values, "Affärens säljare", the new "Underlag" and "Ursprunglig
+säljare" all live on the prospect and survive conversion. The portal is the
+sellers' interface; Pipedrive is the back office. Conversion to a deal *is* the
+approval, and it happens nowhere near this application.
+
+### Seller identity replaced the shared password
+
+The four sellers are options 72–75 on "Affärens säljare" and have no Pipedrive
+login, so a portal account carries the option id (`APP_USERS`, scrypt hashes
+from `npm run hash-password`). The signed session carries it and **no request
+body names a seller any more** — the fields were removed from the schemas, so a
+seller cannot act in a colleague's name whatever they send.
+
+### Persistence moved off the filesystem
+
+Vercel functions cannot write to disk, which the plan surfaced before it broke
+anything: run history and the new supplier registry are Neon Postgres, with the
+JSON Lines file kept for local development. Tables are created on first use.
+
+### Audio evidence, and why the ordering matters
+
+Vercel caps a request at 4.5 MB, so a recording goes browser → private Vercel
+Blob → server → Pipedrive, attached to prospect and organization. "Ljudfil
+uppladdad" is written **only** after Pipedrive confirms the file; a failed
+status write is reported as its own outcome ("do not upload again") because a
+blind retry would attach a second copy. The staged blob is deleted on success
+and kept on failure so a retry needs no new file pick.
+
+### Meeting slots, computed rather than fetched
+
+Scheduler has no public API for availability, so the portal derives it: working
+window minus the technicians' bookings (`PIPEDRIVE_TECHNICIAN_USER_IDS`). A
+slot survives while one technician is free and the booking is assigned to them,
+so a pool of two offers twice the hours rather than the intersection. The slot
+is re-checked at submit and refused if taken — this **replaces** "boka ändå",
+which is what produced activity pair 4505/4506.
+
+### Boundaries asserted, not just intended
+
+The document requires the restriction to hold "även vid direkt anrop till
+formulärets backend". `src/lib/crm/boundaries.test.ts` fails if a deal-creating
+or converting function reappears, if a second update path is added, or if the
+portal writes a status describing someone else's action.
+
+### Verification
+
+- `npm test` — **391/391 across 27 files**.
+- `npm run typecheck`, `npm run lint`, `npm run build` — all pass.
+
+### The database and the seller accounts exist now
+
+Neon project **`sales-form`** (`misty-sky-76224905`, aws-eu-west-2, Postgres 18)
+is connected through the pooled URL in `.env.local`. Verified against the live
+database, not mocks: `ensureSchema` created `history` and `suppliers`, a
+history row round-tripped with its identity number redacted and was invisible
+to a second seller, all 64 suppliers seeded, a new supplier saved and a
+duplicate organisationsnummer was refused. The verification rows were deleted;
+the seeded supplier list is what remains.
+
+The four seller accounts are in `APP_USERS`, each bound to its option id, and
+all four were checked end to end **through the running server**: every account
+logs in, its session cookie carries the right option and name, the gated pages
+load, and both a wrong password and a colleague's password are refused.
+Passwords are in `.seller-credentials.txt` — gitignored, to be handed out once
+and then deleted.
+
+### The `$` in a password hash broke every login
+
+Worth knowing, because it was invisible from the outside and cost a full
+debugging pass. The hash format was `scrypt$<salt>$<hash>`. Those hashes live
+inside `APP_USERS` in an env file, and **env loaders expand `$name` as a
+variable reference** — so Next.js delivered `APP_USERS` as 338 characters
+instead of 996, with every `passwordHash` reduced to the bare string
+`"scrypt"`.
+
+Nothing looked wrong: the JSON still parsed, all four accounts still loaded,
+`isAuthConfigured()` still returned true. Only the comparison failed, so the
+server answered "fel användarnamn eller lösenord" to correct credentials.
+Testing the auth chain directly passed every time, because a Node script
+reading the file itself never expands anything — the bug existed only across
+the env boundary.
+
+The separator is now a dot (`scrypt.<salt>.<hash>`), and `password.test.ts`
+asserts both that no `$` appears and that a hash survives a simulated
+expansion. **This applies to Vercel too:** paste hashes exactly as
+`npm run hash-password` prints them.
+
+`APP_ACCESS_PASSWORD` was removed from `.env.local`: the shared-password gate
+no longer exists.
+
+**Option 75 is Daniel Krans, not Tobias Ek.** The August entry below recorded
+the latter; the field has changed since. `seller.test.ts` now matches the live
+account.
+
+### Still unset in `.env.local`, and what each blocks
+
+| Key | Blocks |
+| --- | --- |
+| `PIPEDRIVE_FIELD_UNDERLAG` | prospect creation (fails loudly, by design) |
+| `PIPEDRIVE_FIELD_URSPRUNGLIG_SALJARE` | prospect creation, same |
+| `PIPEDRIVE_LEAD_OWNER_USER_ID` | nothing; prospects fall to the token's user |
+| `PIPEDRIVE_TECHNICIAN_USER_IDS` | nothing; every booking blocks one shared slot pool |
+| `BLOB_READ_WRITE_TOKEN` | audio on Vercel; local dev posts direct to the route |
+
+Neither custom field exists in the account yet — confirmed live. An
+administrator has to create them before a prospect can be created at all.
+
+### Two assumptions in the code that live data has not tested
+
+Both are decisions taken from documentation alone, and both are cheap to check
+once the account is reachable. They are recorded here because each will look
+like a different bug if it is wrong.
+
+**1. One file upload, two records.** `attachAudioToProspect`
+(`src/lib/prospects/audio.ts`) sends a single `POST /files` carrying both
+`lead_id` and `org_id`, on the reading that Pipedrive links it to both. The
+parameters are documented; the resulting visibility is not. Upload a short
+recording and look at the prospect *and* the organization in their UI.
+
+If it only lands on one, the fix is two uploads from the same buffer, and the
+status must still follow the *last* successful one — the ordering guarantee
+("Ljudfil uppladdad" only after Pipedrive confirms) has to survive the change.
+Symptom if unnoticed: QC opens the organization and finds no recording, while
+the portal reports the evidence as uploaded.
+
+**2. The status page reads one page of deals.** `listDealsWithSourceLead`
+(`src/lib/pipedrive/service.ts`) fetches 500 and stops. Pipedrive v2 pages by
+an opaque cursor in the response envelope, which `pipedriveRequest` unwraps
+away before the caller sees it — so paging needs the client to surface
+`additional_data.next_cursor` first, not just another loop here.
+
+500 is well past one seller's book, but it is an account-wide read: the cap
+bites when the *account* passes 500 deals, not when a seller does. Symptom if
+unnoticed: a converted prospect quietly shows as "Väntar på kvalitetskontroll"
+forever, because the deal it became fell outside the page and
+`source_lead_id` never matched. Silent and wrong, which is why it is here
+rather than in a comment alone.
+
+### Open items, in the order they block things
+
+1. **Client/admin facts.** Pipedrive user ids for the QC inbox and the
+   technician pool; the two new custom fields ("Underlag" with exactly the four
+   options in `src/lib/crm/prospect.ts`, "Ursprunglig säljare") and their keys.
+   Prospect creation fails loudly without them, by design.
+2. **The two live checks above**, once the account is reachable.
+3. **Supplier organisationsnummer.** 63 of the 64 shipped suppliers have none;
+   they are blank rather than guessed, and the letter omits the line.
+4. **Smart Docs template.** Confirm the organization-level template can carry
+   what it needs: prospect-level commercial values are deliberately not
+   mirrored onto the organization, since one organization can have several
+   prospects.
+5. **Final legal wording** for the contract and the cancellations. Both PDFs
+   are still marked `UTKAST`.
+6. Deal `806` still needs deleting by hand.
+
+### Worth knowing before touching this
+
+- `source_lead_id` on v2 deals is how a converted prospect is matched to its
+  deal — no extra custom field was needed. Converted leads leave the default
+  listing, so the status page reads the archived list too.
+- Each enum field has its **own** option ids: "Ursprunglig säljare" lists the
+  same four names under different numbers than "Affärens säljare", so the
+  seller is mapped through the label, never copied.
+
+
 ## 2026-08-27 — Seller field bound to Pipedrive, booking-overlap warning added; 233 tests pass
 
 Two features, both driven by what the live Pipedrive account actually contains

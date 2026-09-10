@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   initialContract,
-  initialDeal,
   initialMediacleaning,
-  initialMeeting
+  initialMeeting,
+  initialProspect
 } from "@/components/sales-wizard/initialState";
 import {
   contractStepSchema,
-  dealStepSchema,
   mediacleaningStepSchema,
-  meetingStepSchema
+  meetingStepSchema,
+  prospectStepSchema
 } from "@/lib/crm/schemas";
 
 /**
@@ -59,13 +59,13 @@ describe("wizard initial state (S01)", () => {
    * The other steps all require seller input, so an untouched form is expected
    * to fail — on missing values, with every issue naming a field.
    *
-   * The real shape guarantee comes from the `: DealStepData` annotations on the
-   * exported constants, which are checked at compile time. This only catches a
-   * schema that rejects the initial state outright, e.g. after a field is
-   * renamed on one side but not the other.
+   * The real shape guarantee comes from the `: ProspectStepData` annotations on
+   * the exported constants, which are checked at compile time. This only
+   * catches a schema that rejects the initial state outright, e.g. after a
+   * field is renamed on one side but not the other.
    */
   it.each([
-    ["deal", dealStepSchema, initialDeal],
+    ["prospect", prospectStepSchema, initialProspect],
     ["mediacleaning", mediacleaningStepSchema, initialMediacleaning],
     ["contract", contractStepSchema, initialContract]
   ])("starts %s from a shape its schema recognizes", (_label, schema, initial) => {
@@ -73,5 +73,13 @@ describe("wizard initial state (S01)", () => {
 
     expect(result.success).toBe(false);
     expect(result.success === false && result.error.issues.every((issue) => issue.path.length > 0)).toBe(true);
+  });
+
+  it("starts the prospect with no evidence chosen, so the seller has to decide", () => {
+    const result = prospectStepSchema.safeParse(initialProspect);
+
+    expect(result.success === false && result.error.issues.some((issue) => issue.path[0] === "evidenceMethod")).toBe(
+      true
+    );
   });
 });

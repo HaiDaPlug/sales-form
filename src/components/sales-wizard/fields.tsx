@@ -7,7 +7,23 @@ export type StepProps<T> = {
   onChange: (value: T) => void;
   /** Pipedrive lists backing the dropdowns; fetched once by the wizard. */
   reference: ReferenceData;
+  /** The logged-in seller's display name. Shown, never edited. */
+  sellerName: string;
 };
+
+/**
+ * A value the seller can see but not change — the logged-in seller's name on
+ * every step. Rendered like a field so it sits in the grid, styled so it does
+ * not look like an input waiting to be typed in.
+ */
+export function ReadOnlyField({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className={`field ${className ?? ""}`}>
+      <FieldLabel label={label} />
+      <div className="readonly-value">{value}</div>
+    </div>
+  );
+}
 
 /**
  * A field label, with the asterisk that marks a value the step cannot be

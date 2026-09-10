@@ -491,6 +491,22 @@ textarea:disabled {
   font-size: 12px;
 }
 
+/* A value shown in the form grid that the seller cannot edit — the logged-in
+   seller. Same rhythm as an input, but flat and dashed so it does not invite
+   typing. */
+.readonly-value {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
 /* Marks a field the step cannot be submitted without. Decorative — the control
    carries `aria-required`, so screen readers are not read a stray asterisk. */
 .required-mark {
@@ -543,6 +559,135 @@ textarea:disabled {
   accent-color: var(--accent);
   box-shadow: none;
   cursor: pointer;
+}
+
+/* =============================================================================
+   Status page
+   ========================================================================== */
+
+.customer-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.customer-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+}
+
+.customer-name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.customer-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* The status page stacks several panels; give them breathing room. */
+.history-page .panel + .panel {
+  margin-top: 18px;
+}
+
+/* =============================================================================
+   Chosen suppliers
+
+   One card per supplier on the cancellation, showing the details the letter
+   will carry. They come from the shared registry, so only the free-text
+   comment is editable here.
+   ========================================================================== */
+
+.supplier-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+}
+
+.supplier-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.supplier-name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.supplier-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* =============================================================================
+   Meeting slots
+
+   The bookable times for a date, as a wrapping grid of buttons. Only times the
+   technicians actually have free are rendered, so there is no disabled state:
+   everything on screen can be picked.
+   ========================================================================== */
+
+.slot-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Empty while slots are shown, and the browser would still reserve its line. */
+.slot-status:empty {
+  display: none;
+}
+
+.slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.slot {
+  min-height: 42px;
+  padding: 10px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.14s var(--ease), background 0.14s var(--ease), color 0.14s var(--ease);
+}
+
+.slot:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.slot[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
 }
 
 /* =============================================================================
@@ -735,6 +880,16 @@ textarea:disabled {
 }
 
 /* Days borrowed from the neighbouring months stay pickable, just quiet. */
+/* Past dates on a picker that forbids them. */
+.calendar-day:disabled {
+  color: var(--line-strong);
+  cursor: not-allowed;
+}
+
+.calendar-day:disabled:hover {
+  background: transparent;
+}
+
 .calendar-day[data-outside="true"] {
   color: var(--muted);
   opacity: 0.55;

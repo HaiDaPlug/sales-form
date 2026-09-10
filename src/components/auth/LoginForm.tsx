@@ -8,7 +8,7 @@ import type { SubmitState } from "@/lib/crm/types";
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [state, setState] = useState<SubmitState>({ status: "idle" });
 
@@ -23,7 +23,7 @@ export function LoginForm() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, password })
+        body: JSON.stringify({ username, password })
       });
       const result = (await response.json()) as { ok: boolean; error?: string };
 
@@ -58,16 +58,18 @@ export function LoginForm() {
       />
 
       <form className="login-card" onSubmit={handleSubmit}>
-        <p className="hint">Internt verktyg. Logga in för att fortsätta.</p>
+        <p className="hint">Internt verktyg. Logga in med ditt eget konto.</p>
 
         <div className="field">
-          <label htmlFor="login-name">Ditt namn</label>
+          <label htmlFor="login-username">Användarnamn</label>
           <input
-            id="login-name"
-            name="name"
+            id="login-username"
+            name="username"
             autoComplete="username"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
+            autoCapitalize="none"
+            spellCheck={false}
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
             required
           />
         </div>
@@ -95,7 +97,9 @@ export function LoginForm() {
           {state.status === "loading" ? "Loggar in..." : "Logga in"}
         </button>
 
-        <p className="login-footnote">Ditt namn används för att märka dina körningar i historiken.</p>
+        <p className="login-footnote">
+          Ditt konto avgör vilken säljare prospekt, möten och avtal registreras på.
+        </p>
       </form>
     </div>
   );

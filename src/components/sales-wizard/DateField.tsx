@@ -30,7 +30,9 @@ export function DateField({
   onChange,
   className,
   clearable = true,
-  required
+  required,
+  /** Blocks dates before today — a meeting cannot be booked into the past. */
+  disablePast = false
 }: {
   label: string;
   value?: string;
@@ -38,6 +40,7 @@ export function DateField({
   className?: string;
   clearable?: boolean;
   required?: boolean;
+  disablePast?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState<MonthCursor>(() => monthCursorFor(value, new Date()));
@@ -58,7 +61,11 @@ export function DateField({
     setOpen(true);
   }
 
+  const isDisabled = (iso: string) => disablePast && iso < todayIso;
+
   function pick(iso: string) {
+    if (isDisabled(iso)) return;
+
     onChange(iso);
     setOpen(false);
     rootRef.current?.querySelector<HTMLElement>("[data-popover-trigger]")?.focus();
@@ -155,6 +162,8 @@ export function DateField({
                   data-today={day.iso === todayIso ? "true" : undefined}
                   aria-pressed={day.iso === value}
                   aria-label={formatLongDate(day.iso)}
+                  aria-disabled={isDisabled(day.iso) || undefined}
+                  disabled={isDisabled(day.iso)}
                   tabIndex={day.iso === focused ? 0 : -1}
                   onClick={() => pick(day.iso)}
                 >

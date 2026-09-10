@@ -1,17 +1,30 @@
 import { useState } from "react";
-import { CheckLabel, FormSection, ReferenceSelect, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+import { FormSection, ReadOnlyField, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
 import { DateField } from "@/components/sales-wizard/DateField";
-import { TimeField } from "@/components/sales-wizard/TimeField";
+import { SlotPicker } from "@/components/sales-wizard/SlotPicker";
 import { LookupBox, type ConflictChoice, type FieldConflict } from "@/components/sales-wizard/LookupBox";
 import { findPersonConflicts } from "@/components/sales-wizard/utils";
 import type { MeetingStepData } from "@/lib/crm/types";
 
-export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStepData>) {
+export function MeetingStep({
+  data,
+  onChange,
+  sellerName,
+  slotRefreshToken
+}: StepProps<MeetingStepData> & {
+  /** Bumped when a booking is refused, so the picker re-reads the calendars. */
+  slotRefreshToken: number;
+}) {
   // Differences between the typed contact details and the linked record. Held
   // in the step rather than the wizard: they are resolved here and never submitted.
   const [conflicts, setConflicts] = useState<FieldConflict[]>([]);
 
-  const isIndividual = data.organization?.customerType === "individual";
+  /**
+   * A new organization is being registered as part of this booking. Its website
+   * is required then, and only then — an existing record already has one, and a
+   * meeting booked from contact details alone has no organization at all.
+   */
+  const registersNewOrganization = Boolean(data.organization?.name?.trim()) && !data.organization?.id;
 
   function resolveConflict(conflict: FieldConflict, choice: ConflictChoice) {
     // "Keep existing" already matches what the lookup wrote into the field, so
@@ -25,25 +38,6 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
 
   return (
     <>
-      <section className="section">
-        <h2 className="section-title">Pipedrive Scheduler</h2>
-        {reference.schedulerUrl ? (
-          <>
-            <p className="hint">
-              Dela Scheduler-länken när kunden ska välja tid. När kunden bokar skapar Pipedrive aktiviteten och
-              skickar bekräftelsen; skapa då inte en extra aktivitet med formuläret nedan.
-            </p>
-            <a className="link-button" href={reference.schedulerUrl} target="_blank" rel="noreferrer">
-              Öppna Pipedrive Scheduler
-            </a>
-          </>
-        ) : (
-          <p className="hint">
-            Ingen Scheduler-länk är konfigurerad. Kopiera en delad länk från Pipedrive till
-            PIPEDRIVE_SCHEDULER_URL.
-          </p>
-        )}
-      </section>
       <LookupBox
         title="Koppla befintlig person"
         endpoint="/api/pipedrive/persons/search"
@@ -93,24 +87,22 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
         <TextField label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <TextField label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
         <TextField
-          label={isIndividual ? "Kundnamn" : "Organisation"}
+          label="Organisation"
           value={data.organization?.name}
           onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
         />
-        <div className="field full">
-          <CheckLabel
-            label="Privatperson eller enskild firma (personnummer används som organisationsnummer)"
-            checked={isIndividual}
-            onChange={(checked) =>
-              onChange({
-                ...data,
-                organization: { ...data.organization, customerType: checked ? "individual" : "company" }
-              })
-            }
+        {/* Shown only while a new organization is being registered: the client
+            requires a website for one, and an existing record already has its own. */}
+        {registersNewOrganization && (
+          <TextField
+            required
+            label="Webbadress"
+            value={data.organization?.website}
+            onChange={(website) => onChange({ ...data, organization: { ...data.organization, website } })}
           />
-        </div>
+        )}
         <TextField
-          label={isIndividual ? "Personnummer" : "Organisationsnummer"}
+          label="Organisationsnummer/personnummer"
           value={data.organization?.organizationNumber}
           onChange={(organizationNumber) =>
             onChange({ ...data, organization: { ...data.organization, organizationNumber } })
@@ -124,56 +116,25 @@ export function MeetingStep({ data, onChange, reference }: StepProps<MeetingStep
       </FormSection>
 
       <FormSection title="Möte">
+        {/* Editable, with the standard agenda prefilled. */}
         <TextField label="Mötestyp" value={data.meetingType} onChange={(meetingType) => onChange({ ...data, meetingType })} />
-        <ReferenceSelect
-          label="Säljare"
-          value={data.sellerId}
-          options={reference.sellers}
-          loading={reference.loading}
-          error={reference.error}
-          onChange={(sellerId) => {
-            // The name is what reaches Pipedrive — the activity note is the only
-            // place it can appear — so it has to be resolved and stored here.
-            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
-            onChange({ ...data, sellerId, sellerName: seller?.name ?? "" });
-          }}
-        />
-        <ReferenceSelect
-          label="IT-tekniker"
-          value={data.technicianId}
-          options={reference.users}
-          loading={reference.loading}
-          error={reference.error}
-          placeholder="Välj eller lämna tomt"
-          onChange={(technicianId) => {
-            const technician = reference.users.find((user) => String(user.id) === technicianId);
-            onChange({ ...data, technicianId, technicianName: technician?.name ?? data.technicianName });
-          }}
-        />
-        {/* Kept as free text: technicians may be external contacts rather than
-            Pipedrive users, so a name must be enterable without a user record. */}
-        <TextField
-          label="IT-tekniker namn (om extern)"
-          value={data.technicianName}
-          onChange={(technicianName) => onChange({ ...data, technicianName })}
-        />
-        <DateField required label="Datum" value={data.date} onChange={(date) => onChange({ ...data, date })} />
-        <TimeField required label="Tid" value={data.time} onChange={(time) => onChange({ ...data, time })} />
-        <TextField
+        {/* The booking is made in the logged-in seller's name; the server
+            attaches it, so there is nothing here to choose or edit. */}
+        <ReadOnlyField label="Säljare" value={`Inloggad som: ${sellerName}`} />
+        <DateField
           required
-          label="Längd minuter"
-          type="number"
-          value={String(data.durationMinutes)}
-          onChange={(durationMinutes) => onChange({ ...data, durationMinutes: Number(durationMinutes) })}
+          label="Datum"
+          value={data.date}
+          disablePast
+          onChange={(date) => onChange({ ...data, date, time: "" })}
+        />
+        <SlotPicker
+          date={data.date}
+          value={data.time}
+          refreshToken={slotRefreshToken}
+          onChange={(time) => onChange({ ...data, time })}
         />
         <TextField label="Plats eller länk" value={data.locationOrLink} onChange={(locationOrLink) => onChange({ ...data, locationOrLink })} />
-        <TextArea className="full" label="Agenda" value={data.agenda} onChange={(agenda) => onChange({ ...data, agenda })} />
-        <TextArea
-          className="full"
-          label="Anteckningar till IT-tekniker"
-          value={data.technicianNotes}
-          onChange={(technicianNotes) => onChange({ ...data, technicianNotes })}
-        />
         <TextArea
           className="full"
           label="Intern kommentar"

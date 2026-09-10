@@ -1,74 +1,106 @@
 import {
   CheckLabel,
   FormSection,
-  ReferenceSelect,
+  ReadOnlyField,
   SelectField,
   TextArea,
   TextField,
   type StepProps
 } from "@/components/sales-wizard/fields";
+import { ContactPicker } from "@/components/sales-wizard/ContactPicker";
 import { LookupBox } from "@/components/sales-wizard/LookupBox";
 import type { ContractStepData } from "@/lib/crm/types";
 
 export function ContractStep({
   data,
   onChange,
-  reference,
+  sellerName,
   mediacleaningReady
 }: StepProps<ContractStepData> & { mediacleaningReady: boolean }) {
+  /** Fills the customer fields from the record the seller picked. */
+  async function fillFromOrganization(organizationId: string | number) {
+    try {
+      const response = await fetch(`/api/pipedrive/organizations/${encodeURIComponent(String(organizationId))}`);
+      const payload = (await response.json()) as {
+        ok: boolean;
+        data?: { name: string; organizationNumber?: string; address?: string; city?: string };
+      };
+
+      if (!response.ok || !payload.ok || !payload.data) return;
+
+      const profile = payload.data;
+
+      onChange({
+        ...data,
+        organizationId,
+        companyName: profile.name,
+        organizationNumber: profile.organizationNumber ?? data.organizationNumber,
+        // The contract prints one address line, so the city stays folded in.
+        address: [profile.address, profile.city].filter(Boolean).join(", ") || data.address,
+        leadId: "",
+        dealId: "",
+        signerPersonId: undefined,
+        signerName: ""
+      });
+    } catch {
+      // The lookup already wrote the id; leaving the rest to the seller beats
+      // losing the selection over a failed fetch.
+    }
+  }
+
   return (
     <>
       <LookupBox
         title="Koppla befintlig organisation"
         endpoint="/api/pipedrive/organizations/search"
-        selectedLabel={data.organizationId ? `Organisation ${data.organizationId}` : undefined}
-        onClear={() => onChange({ ...data, organizationId: "", dealId: "" })}
-        onSelect={(hit) =>
-          onChange({
-            ...data,
-            organizationId: hit.id,
-            dealId: "",
-            companyName: data.companyName || hit.name,
-            address: data.address || hit.address || ""
-          })
+        selectedLabel={
+          data.organizationId ? `${data.companyName || "Organisation"} (ID ${data.organizationId})` : undefined
         }
+        onClear={() =>
+          onChange({ ...data, organizationId: "", leadId: "", dealId: "", signerPersonId: undefined, signerName: "" })
+        }
+        onSelect={(hit) => void fillFromOrganization(hit.id)}
       />
       <LookupBox
-        title="Koppla befintlig affär för uppladdning"
-        endpoint="/api/pipedrive/deals/search"
-        selectedLabel={data.dealId ? `Affär ${data.dealId}` : undefined}
-        onClear={() => onChange({ ...data, dealId: "" })}
-        onSelect={(hit) =>
-          onChange({
-            ...data,
-            dealId: hit.id,
-            organizationId: hit.organizationId ?? data.organizationId,
-            companyName: data.companyName || hit.organizationName || ""
-          })
-        }
+        title="Koppla befintligt prospekt"
+        endpoint="/api/pipedrive/leads/search"
+        selectedLabel={data.leadId ? `Prospekt ${data.leadId}` : undefined}
+        onClear={() => onChange({ ...data, leadId: "" })}
+        onSelect={(hit) => {
+          const organizationId = hit.organizationId ?? data.organizationId;
+          onChange({ ...data, leadId: String(hit.id), dealId: "", organizationId });
+
+          if (organizationId && !data.companyName) void fillFromOrganization(organizationId);
+        }}
       />
       <p className="hint">
-        PDF och anteckning kopplas i första hand till vald affär, annars till vald organisation.
+        Avtalet laddas upp till organisationen, som är där det skickas för signering med smart doc. Anteckningen
+        kopplas till prospektet. Ingen affär skapas — försäljningen godkänns i Pipedrive efter kvalitetskontroll.
       </p>
 
       <FormSection title="Avtal">
         <TextField required label="Företagsnamn" value={data.companyName} onChange={(companyName) => onChange({ ...data, companyName })} />
         <TextField required label="Organisationsnummer" value={data.organizationNumber} onChange={(organizationNumber) => onChange({ ...data, organizationNumber })} />
-        <TextField required label="Firmatecknare/kontaktperson" value={data.signerName} onChange={(signerName) => onChange({ ...data, signerName })} />
-        <TextField required label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
-        <ReferenceSelect
-          label="Säljare"
-          value={data.sellerId}
-          options={reference.sellers}
-          loading={reference.loading}
-          error={reference.error}
-          onChange={(sellerId) => {
-            // The contract prints the seller's name, so keep it in sync.
-            const seller = reference.sellers.find((option) => String(option.id) === sellerId);
-            onChange({ ...data, sellerId, sellerName: seller?.name ?? data.sellerName });
-          }}
-        />
-        <TextField required label="Säljare namn" value={data.sellerName} onChange={(sellerName) => onChange({ ...data, sellerName })} />
+        <TextField required className="full" label="Adress" value={data.address} onChange={(address) => onChange({ ...data, address })} />
+
+        {data.organizationId ? (
+          <ContactPicker
+            organizationId={data.organizationId}
+            value={data.signerPersonId}
+            onChange={(person) => onChange({ ...data, signerPersonId: person.id, signerName: person.name })}
+          />
+        ) : (
+          <TextField
+            required
+            className="full"
+            label="Firmatecknare/kontaktperson"
+            value={data.signerName}
+            onChange={(signerName) => onChange({ ...data, signerName })}
+          />
+        )}
+
+        {/* The contract prints the logged-in seller; there is nothing to choose. */}
+        <ReadOnlyField label="Ansvarig säljare" value={`Inloggad som: ${sellerName}`} />
         <TextField required label="Pris/kostnad" type="number" value={String(data.price)} onChange={(price) => onChange({ ...data, price: Number(price) })} />
         <SelectField
           label="Betalningsintervall"
