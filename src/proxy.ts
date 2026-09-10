@@ -6,7 +6,7 @@ import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth/session";
  * the deny-by-default shape means forgetting to list a new route keeps it
  * protected rather than exposing it.
  */
-const PUBLIC_PATHS = ["/login", "/api/auth/login"];
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/diagnose"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
