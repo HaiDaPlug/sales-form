@@ -74,10 +74,32 @@ duplicate organisationsnummer was refused. The verification rows were deleted;
 the seeded supplier list is what remains.
 
 The four seller accounts are in `APP_USERS`, each bound to its option id, and
-all four were checked end to end: every account logs in, its session carries
-the right option, the name matches what Pipedrive returns for that option, and
-both a wrong password and a colleague's password are refused. Passwords are in
-`.seller-credentials.txt` — gitignored, to be handed out once and then deleted.
+all four were checked end to end **through the running server**: every account
+logs in, its session cookie carries the right option and name, the gated pages
+load, and both a wrong password and a colleague's password are refused.
+Passwords are in `.seller-credentials.txt` — gitignored, to be handed out once
+and then deleted.
+
+### The `$` in a password hash broke every login
+
+Worth knowing, because it was invisible from the outside and cost a full
+debugging pass. The hash format was `scrypt$<salt>$<hash>`. Those hashes live
+inside `APP_USERS` in an env file, and **env loaders expand `$name` as a
+variable reference** — so Next.js delivered `APP_USERS` as 338 characters
+instead of 996, with every `passwordHash` reduced to the bare string
+`"scrypt"`.
+
+Nothing looked wrong: the JSON still parsed, all four accounts still loaded,
+`isAuthConfigured()` still returned true. Only the comparison failed, so the
+server answered "fel användarnamn eller lösenord" to correct credentials.
+Testing the auth chain directly passed every time, because a Node script
+reading the file itself never expands anything — the bug existed only across
+the env boundary.
+
+The separator is now a dot (`scrypt.<salt>.<hash>`), and `password.test.ts`
+asserts both that no `$` appears and that a hash survives a simulated
+expansion. **This applies to Vercel too:** paste hashes exactly as
+`npm run hash-password` prints them.
 
 `APP_ACCESS_PASSWORD` was removed from `.env.local`: the shared-password gate
 no longer exists.

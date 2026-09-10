@@ -64,6 +64,13 @@ Hashes come from `npm run hash-password`. The signed session carries the option
 id, and **no request body ever names a seller** — a seller cannot act in a
 colleague's name, whatever they send.
 
+Paste a hash exactly as the script prints it. The format is dot-separated
+rather than the conventional `scrypt$…$…`, because these values live in an
+environment variable and `$name` is expanded there as a variable reference: a
+`$`-separated hash reaches the server as the bare string `scrypt`, and every
+login fails with the correct password while the accounts still load. The same
+applies wherever `APP_USERS` is configured, Vercel included.
+
 An administrator changes an assignment by editing "Affärens säljare" in
 Pipedrive, per record or in bulk. The portal reads that on every request, so a
 transferred customer moves between sellers immediately. "Ursprunglig säljare"
