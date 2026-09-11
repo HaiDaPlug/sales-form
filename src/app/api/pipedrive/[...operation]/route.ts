@@ -20,6 +20,7 @@ import {
   PartialResolutionError,
   getCustomFieldMappings,
   getDealFields,
+  getInvoiceGroups,
   getOrganizationFields,
   getOrganizationPersons,
   getOrganizationProfile,
@@ -107,6 +108,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     if (operation === "users") return jsonOk(await getUsers());
     if (operation === "sellers") return jsonOk(await getSellers());
+    if (operation === "invoice-groups") return jsonOk(await getInvoiceGroups());
 
     if (operation === "activities/slots") {
       return jsonOk(await findAvailableSlots(requiredQuery(searchParams, "date")));
