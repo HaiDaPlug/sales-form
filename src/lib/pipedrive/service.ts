@@ -332,19 +332,27 @@ const LIST_PAGE_SIZE = 500;
 const MAX_PAGES = 10;
 
 /**
- * Every lead the account holds, active or archived.
+ * The account's leads, in one listing.
  *
- * A converted lead disappears from the default listing, so the archived ones
- * are fetched too: that is how a prospect that has become a deal — or been
- * shelved — still shows up on the seller's status page rather than vanishing.
+ * `archived_status` does nothing here. Verified against the account: every
+ * value — "archived", "not_archived", "all", omitted — returns exactly the
+ * same rows, and an archived lead is in none of them. So the endpoint returns
+ * the active leads and nothing else, whatever it is asked for.
+ *
+ * Two consequences, both deliberate. Asking twice and concatenating (once for
+ * each state) listed every prospect twice, which is why this takes no argument
+ * now. And an archived lead cannot be listed at all: a prospect that has been
+ * converted or shelved drops off the seller's status page instead of showing
+ * its outcome. Reading each lead by id would find it — the record is intact
+ * and still carries `is_archived` — but there is no listing to enumerate them
+ * from, so that needs a different source, not a different query.
  */
-export async function listLeads(archived: boolean): Promise<AnyRecord[]> {
+export async function listLeads(): Promise<AnyRecord[]> {
   const collected: AnyRecord[] = [];
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const batch = await pipedriveRequest<AnyRecord[]>("/leads", {
       query: {
-        archived_status: archived ? "archived" : "not_archived",
         limit: LIST_PAGE_SIZE,
         start: page * LIST_PAGE_SIZE
       }
@@ -601,6 +609,25 @@ function sameLabel(left: string, right: string): boolean {
  */
 export async function getSellers(): Promise<ReferenceOption[]> {
   const fieldKey = getPipedriveConfig().customFields.affarensSaljare;
+  if (!fieldKey) return [];
+
+  return (await getEnumOptions(fieldKey)).map((option) => ({ id: option.id, name: option.label }));
+}
+
+/**
+ * The invoicing groups a prospect can be placed in.
+ *
+ * The options of the "Fakturagrupp" custom deal field, read live for the same
+ * reason as the sellers: the labels carry the account's own wording, and an
+ * administrator adding a group must reach the form without a redeploy. The
+ * seller picks a label; `buildLeadPayload` turns it back into the option id
+ * Pipedrive requires.
+ *
+ * Returns an empty list when the field key is unconfigured or the field has
+ * since been deleted, which makes the form fall back to free text.
+ */
+export async function getInvoiceGroups(): Promise<ReferenceOption[]> {
+  const fieldKey = getPipedriveConfig().customFields.fakturagrupp;
   if (!fieldKey) return [];
 
   return (await getEnumOptions(fieldKey)).map((option) => ({ id: option.id, name: option.label }));
@@ -1254,8 +1281,17 @@ export async function buildLeadPayload(
 
   payload[fields.viktigastForKunden] = data.viktigastForKunden;
   payload[fields.fakturaStart] = data.fakturaAvtalStart;
-  payload[fields.fakturagrupp] = data.fakturagrupp;
   payload[fields.affarensSaljare] = seller.optionId;
+
+  // "Fakturagrupp" is a single-option field: Pipedrive rejects the label and
+  // wants the option id. The form sends what the seller saw, so the label is
+  // resolved here rather than stored, which keeps the account's own wording
+  // (and its irregular spacing) authoritative.
+  payload[fields.fakturagrupp] = await resolveEnumOptionId(
+    fields.fakturagrupp,
+    "Fakturagrupp",
+    data.fakturagrupp
+  );
 
   // "Ursprunglig säljare" has its own option ids for the same four names, so
   // the session's option is mapped through its label rather than copied.

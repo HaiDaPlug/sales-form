@@ -63,11 +63,15 @@ afterEach(() => {
   resetEnvCache();
 });
 
-/** `listLeads(false)` is the active list, `listLeads(true)` the archived one. */
+/**
+ * One listing carrying both states, as the endpoint actually returns them —
+ * archived leads are marked with `is_archived`, not separated by the query.
+ */
 function withLeads(active: Record<string, unknown>[], archived: Record<string, unknown>[] = []) {
-  vi.mocked(service.listLeads).mockImplementation(async (isArchived: boolean) =>
-    isArchived ? archived : active
-  );
+  vi.mocked(service.listLeads).mockResolvedValue([
+    ...active.map((entry) => ({ is_archived: false, ...entry })),
+    ...archived.map((entry) => ({ is_archived: true, ...entry }))
+  ]);
 }
 
 describe("getSellerStatus", () => {
@@ -157,6 +161,21 @@ describe("getSellerStatus", () => {
     withLeads([], [lead()]);
 
     expect((await getSellerStatus(filippa)).prospects[0].qualityControl).toBe("archived");
+  });
+
+  /**
+   * The listing cannot be filtered by archived state — `archived_status` is
+   * accepted and ignored, so both requests returned the same rows and every
+   * prospect was listed twice. One lead is one row, whatever it is asked for.
+   */
+  it("lists a lead once, even though the listing cannot be filtered by state", async () => {
+    withLeads([lead(), lead({ id: "lead-2" })]);
+
+    const status = await getSellerStatus(filippa);
+
+    expect(status.prospects).toHaveLength(2);
+    expect(status.prospects.map((prospect) => prospect.leadId)).toEqual(["lead-1", "lead-2"]);
+    expect(service.listLeads).toHaveBeenCalledTimes(1);
   });
 
   /**

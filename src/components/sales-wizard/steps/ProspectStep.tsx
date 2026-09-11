@@ -18,6 +18,7 @@ export const AUDIO_ACCEPT = "audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-
 export function ProspectStep({
   data,
   onChange,
+  reference,
   sellerName,
   audioFile,
   onAudioFileChange
@@ -154,7 +155,30 @@ export function ProspectStep({
         />
         <TextArea required className="full" label="Viktigast för kunden" value={data.viktigastForKunden} onChange={(viktigastForKunden) => onChange({ ...data, viktigastForKunden })} />
         <DateField required label="Faktura/avtal start" value={data.fakturaAvtalStart} onChange={(fakturaAvtalStart) => onChange({ ...data, fakturaAvtalStart })} />
-        <TextField required label="Fakturagrupp" value={data.fakturagrupp} onChange={(fakturagrupp) => onChange({ ...data, fakturagrupp })} />
+        {/* A single-option field in Pipedrive: the label has to match an
+            existing option exactly, so it is picked rather than typed. The
+            options carry their labels as values — the server resolves the
+            label to the option id Pipedrive requires. An unreadable list
+            falls back to free text rather than leaving a dead field. */}
+        {reference.invoiceGroups.length > 0 ? (
+          <SelectField
+            required
+            label="Fakturagrupp"
+            value={data.fakturagrupp}
+            options={[
+              { value: "", label: reference.loading ? "Hämtar..." : "Välj fakturagrupp..." },
+              ...reference.invoiceGroups.map((group) => ({ value: group.name, label: group.name }))
+            ]}
+            onChange={(fakturagrupp) => onChange({ ...data, fakturagrupp })}
+          />
+        ) : (
+          <TextField
+            required
+            label="Fakturagrupp"
+            value={data.fakturagrupp}
+            onChange={(fakturagrupp) => onChange({ ...data, fakturagrupp })}
+          />
+        )}
         <TextField label="Avtalslängd månader" type="number" value={String(data.contractLengthMonths ?? "")} onChange={(contractLengthMonths) => onChange({ ...data, contractLengthMonths: Number(contractLengthMonths) })} />
         <TextField label="Bindningstid månader" type="number" value={String(data.bindingPeriodMonths ?? 0)} onChange={(bindingPeriodMonths) => onChange({ ...data, bindingPeriodMonths: Number(bindingPeriodMonths) })} />
         <TextField label="Månadskostnad" type="number" value={String(data.monthlyCost ?? 0)} onChange={(monthlyCost) => onChange({ ...data, monthlyCost: Number(monthlyCost) })} />

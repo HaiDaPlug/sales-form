@@ -25,9 +25,8 @@ export async function getSellerStatus(seller: SellerIdentity): Promise<SellerSta
     throw new ConfigurationError("Fältet Affärens säljare är inte mappat (PIPEDRIVE_FIELD_AFFARENS_SALJARE).");
   }
 
-  const [activeLeads, archivedLeads, deals, underlagOptions] = await Promise.all([
-    listLeads(false),
-    listLeads(true),
+  const [leads, deals, underlagOptions] = await Promise.all([
+    listLeads(),
     listDealsWithSourceLead(),
     underlagKey ? getEnumOptions(underlagKey) : Promise.resolve([])
   ]);
@@ -52,10 +51,16 @@ export async function getSellerStatus(seller: SellerIdentity): Promise<SellerSta
     if (status) underlagByOptionId.set(String(option.id), status);
   }
 
-  const prospects = [
-    ...activeLeads.filter(mine).map((lead) => toProspect(lead, false, dealsBySourceLead, underlagKey, underlagByOptionId)),
-    ...archivedLeads.filter(mine).map((lead) => toProspect(lead, true, dealsBySourceLead, underlagKey, underlagByOptionId))
-  ].sort(byNewest);
+  // Archived state is read from each lead, not from the query: the listing
+  // cannot be filtered on it, and one lead must not appear twice. In practice
+  // the listing returns only active leads, so an archived prospect is missing
+  // rather than marked — see `listLeads`.
+  const prospects = leads
+    .filter(mine)
+    .map((lead) =>
+      toProspect(lead, lead.is_archived === true, dealsBySourceLead, underlagKey, underlagByOptionId)
+    )
+    .sort(byNewest);
 
   return {
     prospects,

@@ -60,6 +60,18 @@ const dealFields = [
       { id: 203, label: "Väntar på signering" },
       { id: 204, label: "Avtal signerat" }
     ]
+  },
+  {
+    // Also a single option field: Pipedrive rejects the label and wants the id.
+    // The irregular inner spacing is the account's own, and is kept here on
+    // purpose — it is exactly what a seller could never retype reliably.
+    key: KEYS.fakturagrupp,
+    name: "Fakturagrupp",
+    options: [
+      { id: 19, label: "A - (Kvartal - Jan,Apr,Jul,Okt)" },
+      { id: 38, label: "E - ( Månadsvis)" },
+      { id: 59, label: "F - (Årligt)" }
+    ]
   }
 ];
 
@@ -107,7 +119,7 @@ function prospect(overrides: Partial<ProspectStepInput> = {}): ProspectStepInput
     evidenceMethod: "signature",
     viktigastForKunden: "Synlighet på Google",
     fakturaAvtalStart: "2026-10-01",
-    fakturagrupp: "Standard",
+    fakturagrupp: "E - ( Månadsvis)",
     contractLengthMonths: 12,
     monthlyCost: 995,
     startFee: 0,
@@ -179,7 +191,40 @@ describe("buildLeadPayload", () => {
 
     expect(payload[KEYS.viktigast]).toBe("Synlighet på Google");
     expect(payload[KEYS.fakturaStart]).toBe("2026-10-01");
-    expect(payload[KEYS.fakturagrupp]).toBe("Standard");
+    // The option id, not the label: Pipedrive rejects a string here.
+    expect(payload[KEYS.fakturagrupp]).toBe(38);
+  });
+
+  it("matches the invoice group ignoring case and surrounding space", async () => {
+    const payload = await buildLeadPayload(prospect({ fakturagrupp: "  e - ( månadsvis)  " }), parties, seller);
+
+    expect(payload[KEYS.fakturagrupp]).toBe(38);
+  });
+
+  /**
+   * Inner spacing is *not* normalised, and should not be: "E - (Månadsvis)" and
+   * "E - ( Månadsvis)" could be two different options in an account that has
+   * both. Refusing is what sends an administrator to look, rather than filing
+   * the prospect under a group nobody chose. This is why the field is a
+   * dropdown — a seller typing the label by hand would land here.
+   */
+  it("refuses an invoice group whose inner spacing differs", async () => {
+    const error = await buildLeadPayload(prospect({ fakturagrupp: "E - (Månadsvis)" }), parties, seller).catch(
+      (caught) => caught
+    );
+
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toContain("Fakturagrupp");
+  });
+
+  it("names the invoice group an administrator has to add when it is gone", async () => {
+    const error = await buildLeadPayload(prospect({ fakturagrupp: "Z - (Avskaffad)" }), parties, seller).catch(
+      (caught) => caught
+    );
+
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error.message).toContain("Fakturagrupp");
+    expect(error.message).toContain("Z - (Avskaffad)");
   });
 
   it("assigns the prospect to the session's seller option", async () => {
@@ -222,7 +267,8 @@ describe("buildLeadPayload", () => {
     vi.mocked(pipedriveRequest).mockResolvedValue([
       dealFields[0],
       dealFields[1],
-      { key: KEYS.underlag, name: "Underlag", options: [{ id: 202, label: "Ljudfil uppladdad" }] }
+      { key: KEYS.underlag, name: "Underlag", options: [{ id: 202, label: "Ljudfil uppladdad" }] },
+      dealFields[3]
     ]);
     resetDealFieldsCache();
 
