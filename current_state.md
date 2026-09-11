@@ -1,5 +1,152 @@
 # Current State
 
+## 2026-09-11 — The two custom fields exist; prospect creation works end to end; 403 tests pass
+
+The blocker recorded on 09-09 is gone. An administrator created **"Underlag"**
+and **"Ursprunglig säljare"** as custom *deal* fields, both mapped in
+`.env.local` and on Vercel. All six required keys are configured for the first
+time, and with them prospect creation ran against the live account — the one
+flow that had never been tested at all.
+
+It failed on the first attempt, which is the useful part of this entry.
+
+### Fakturagrupp was free text against a single-option field
+
+`Fakturagrupp` is an **enum** in Pipedrive, but the form rendered a `TextField`,
+the schema validated `requiredText`, and `buildLeadPayload` passed the raw
+string through — while the two fields directly below it resolved their labels to
+option ids. Pipedrive's answer:
+
+> `Custom field validation failed. Expected 'number' as value of singleOption
+> field. ApiKey: 41aa29581ea9…`
+
+Proven both directions against the account: the label string returns 400, option
+id `38` creates the lead.
+
+The bug predates this work and was simply **unreachable** —
+`assertCustomFieldMappings()` rejected every request before the payload could be
+built, so the missing fields were hiding it. Creating them is what exposed it.
+
+It is now a dropdown fed from the field's own options, read live through
+`getInvoiceGroups()` and `/api/pipedrive/invoice-groups` — the same pattern as
+`getSellers()`, so an administrator adding or renaming a group reaches the form
+without a redeploy. The form still sends the **label** and the server resolves
+it to the id, which keeps the note readable and turns a renamed option into a
+configuration error that names it rather than a silent wrong value.
+
+The match ignores case and surrounding space but **not inner space**. The
+account's own labels are irregular — `E - ( Månadsvis)`, `C - ( Kvartal - …` —
+and two groups could differ by exactly that, so guessing between them is worse
+than refusing. This is also why the field had to become a dropdown: no seller
+retypes `E - ( Månadsvis)` correctly. An unreadable list still falls back to
+free text rather than leaving a dead field.
+
+### The status page listed every prospect twice
+
+It fetched active and archived leads separately and concatenated them.
+**`archived_status` does nothing on this endpoint**: every value returns the
+same rows. One listing now, with the archived flag read from each lead.
+
+Verified while investigating, and worth more than the duplication fix: the same
+listing returns **only non-archived leads**, in every variant including
+`archived_status=archived`. Confirmed by un-archiving a lead and watching it
+appear, then re-archiving it and watching it vanish.
+
+So a converted or shelved prospect is **absent from the status page rather than
+shown with its outcome**. This supersedes the 09-09 note that "the status page
+reads the archived list too" — it cannot. Closing it needs a source that can
+enumerate archived leads, not another query. Recorded in `listLeads`.
+
+### Verified against the account, both evidence methods
+
+Records read back from Pipedrive rather than trusted from the response:
+
+| | signature | audio |
+| --- | --- | --- |
+| Fakturagrupp | `38` (option id) | `38` |
+| Affärens säljare | `72` Filippa | `72` |
+| Ursprunglig säljare | `91` Filippa | `91` |
+| Underlag | `88` Digital signering krävs | *empty* |
+
+The empty cell is the design holding: `Ljudfil uppladdad` is written only after
+Pipedrive confirms the file. **Both new fields were left optional in Pipedrive
+deliberately** — marking `Underlag` required would reject every audio prospect
+at creation, since that path leaves it blank on purpose.
+
+`Ursprunglig säljare` carries its own option ids (91–94) for the same four names
+as `Affärens säljare` (72–75), exactly the case the label mapping exists for.
+
+### Mediacleaning: a seller's new organisation is shared, verified
+
+Filippa created an organisation through Mediacleaning; **Robin found it by
+search, read its profile for autofill, and generated a document against it** —
+PDF and note both landing on the organisation. No change was needed.
+
+Organisation search is deliberately **unscoped**, unlike the status page, which
+filters by `Affärens säljare` per Sida 5. That asymmetry is correct: Sida 5
+restricts a seller's own pipeline view, while company records stay shared.
+
+Known and accepted: a Mediacleaning-created organisation has **no people in
+Pipedrive**, since the firmatecknare is typed rather than created. The next
+seller gets an empty contact picker and retypes the name. Not a spec violation —
+Sida 3 only requires picking from existing contacts — and left as is by choice.
+
+### Verification
+
+- `npm test` — **403/403 across 28 files** (was 391/27).
+- `npm run typecheck` — passes.
+- Prospect creation, both evidence methods, against the live account.
+- Cross-seller organisation visibility, two real logins.
+
+### Deployment state
+
+`caa468f` is pushed to `feat/prospekt-overhaul`. **Vercel deploys this branch,
+not `main`** — `/api/auth/diagnose` exists only here and is live, which settles
+it. At the time of writing the deployment still served `bbc973d`, so both fixes
+above are **committed and locally verified but not yet live**; `/invoice-groups`
+returns 404 there. Live prospect creation keeps failing on Fakturagrupp until it
+redeploys — the env keys alone cannot fix a code bug.
+
+`main` is 28 commits behind and contains none of the overhaul.
+
+### Test data, and an honest correction
+
+An earlier cleanup in this session reported a lead as deleted on the strength of
+the call not throwing. It had not been: **the token returns 403 on lead
+deletion** (v1; v2 has no such route). Deletions are now verified by reading the
+record back.
+
+Persons and organizations delete cleanly and were removed. Three ZZTEST leads
+remain **archived, not deleted**, and need removing by hand or a wider token
+scope:
+
+- `4c488890-add4-11f1-9660-4156e51ad2e4` — ZZTEST probe
+- `a8f517b0-add5-11f1-82ea-b1f9a27ddfa0` — ZZTEST signature prospect
+- `aa336410-add5-11f1-a7c7-4da4cb755b8b` — ZZTEST audio prospect
+
+The supplier registry is back to exactly 64.
+
+### Open items, superseding the 09-09 list where they overlap
+
+1. **Redeploy Vercel** so `caa468f` goes live, then re-run prospect creation
+   against the deployed site.
+2. **Archived prospects cannot be listed**, so conversion outcomes never reach
+   the status page. The largest remaining functional gap against Sida 5.
+3. **The three ZZTEST leads** above need deleting by hand.
+4. Items 3–6 of the 09-09 list stand: supplier organisationsnummer, the Smart
+   Docs template, final legal wording, and deal `806`.
+
+### Corrections to the 09-09 entry
+
+- The "still unset" table is obsolete: `PIPEDRIVE_FIELD_UNDERLAG` and
+  `PIPEDRIVE_FIELD_URSPRUNGLIG_SALJARE` are set in both environments, and the
+  fields exist in the account.
+- "Converted leads leave the default listing, so the status page reads the
+  archived list too" is wrong in its second half. The archived list cannot be
+  read at all through this endpoint.
+- Assumption 1 ("one file upload, two records") is still untested. The audio
+  path was not exercised live in this session.
+
 ## 2026-09-09 — Prospect overhaul: the form no longer creates deals; 391 tests pass
 
 The client's technician delivered a five-page change document after testing.
