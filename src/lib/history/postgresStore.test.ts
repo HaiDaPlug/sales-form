@@ -34,9 +34,9 @@ const entry = {
   pipedriveLeadId: "lead-uuid"
 };
 
-/** Every statement after the schema setup, which is `CREATE …` boilerplate. */
+/** Everything the store issues itself, with the schema setup filtered out. */
 function dataQueries() {
-  return query.mock.calls.filter(([text]) => !/^\s*CREATE /.test(String(text)));
+  return query.mock.calls.filter(([text]) => !/^\s*(CREATE|ALTER)\s/i.test(String(text)));
 }
 
 describe("Postgres history store", () => {
@@ -44,7 +44,7 @@ describe("Postgres history store", () => {
     await listHistory({ sellerOptionId: 72 });
     await listHistory({ sellerOptionId: 72 });
 
-    const ddl = query.mock.calls.filter(([text]) => /^\s*CREATE /.test(String(text)));
+    const ddl = query.mock.calls.filter(([text]) => /^\s*(CREATE|ALTER)\s/i.test(String(text)));
 
     expect(ddl.length).toBeGreaterThan(0);
     expect(dataQueries()).toHaveLength(2);

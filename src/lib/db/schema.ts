@@ -36,7 +36,20 @@ const STATEMENTS = [
      active BOOLEAN NOT NULL DEFAULT TRUE,
      created_by TEXT,
      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-   )`
+   )`,
+  /**
+   * `CREATE TABLE IF NOT EXISTS` leaves an existing table exactly as it is, so
+   * a column definition that changes after the first deploy never reaches the
+   * database. `organization_number` began as NOT NULL and had to become
+   * nullable once it emerged that the client owes most of the supplier
+   * numbers; a deployment created before that change kept the old constraint
+   * and rejected every insert with a blank number — including its own seed.
+   *
+   * Dropping a NOT NULL that is already absent is a no-op, so this is safe to
+   * run on every start. Anything else that has to change shape later belongs
+   * here too, as its own idempotent statement.
+   */
+  `ALTER TABLE suppliers ALTER COLUMN organization_number DROP NOT NULL`
 ];
 
 let ensured: { sql: SqlClient; done: Promise<void> } | undefined;

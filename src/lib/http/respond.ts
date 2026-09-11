@@ -44,8 +44,17 @@ export function jsonError(error: unknown, extra: Record<string, unknown> = {}) {
     return NextResponse.json({ ok: false, error: error.message, ...extra }, { status: error.status });
   }
 
-  console.error("Unhandled route error:", error);
-  return NextResponse.json({ ok: false, error: "Ett internt fel uppstod.", ...extra }, { status: 500 });
+  // The message may name a table, a column or a connection host, so it stays
+  // out of the response. The reference does not: it ties what the user is
+  // looking at to the line in the log that explains it, which is the only way
+  // to diagnose a deployed failure without reproducing it first.
+  const reference = Math.random().toString(36).slice(2, 8).toUpperCase();
+  console.error(`Unhandled route error [${reference}]:`, error);
+
+  return NextResponse.json(
+    { ok: false, error: `Ett internt fel uppstod. Referens: ${reference}`, ...extra },
+    { status: 500 }
+  );
 }
 
 function hasStatus(error: unknown): error is Error & { status: number } {
