@@ -1,6 +1,7 @@
 import type { ZodError } from "zod";
 import type { MediacleaningStepData, PersonRef } from "@/lib/crm/types";
 import type { FieldConflict } from "@/components/sales-wizard/LookupBox";
+import { samePhone } from "@/components/sales-wizard/matching";
 import type { SearchHit } from "@/lib/pipedrive/types";
 
 /**
@@ -54,16 +55,6 @@ export function findPersonConflicts(entered: PersonRef, hit: SearchHit): FieldCo
   }
 
   return conflicts;
-}
-
-/** `+46 70-123 45 67`, `070-1234567` and `0701234567` are the same number. */
-function samePhone(left: string, right: string): boolean {
-  return normalizePhone(left) === normalizePhone(right);
-}
-
-function normalizePhone(value: string): string {
-  const digits = value.replace(/[^\d+]/g, "");
-  return digits.replace(/^\+46/, "0").replace(/^0046/, "0");
 }
 
 /** Triggers a browser download for a document streamed back by an API route. */

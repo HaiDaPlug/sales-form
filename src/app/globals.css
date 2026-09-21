@@ -326,28 +326,12 @@ h1 {
   margin-bottom: 24px;
 }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+/* The "new customer" reset, kept on the right of the step heading. */
+.toolbar-actions {
+  display: flex;
   flex: 0 0 auto;
-  padding: 7px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--panel);
-  box-shadow: var(--shadow-sm);
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.status-pill::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--warning);
+  align-items: center;
+  gap: 10px;
 }
 
 /* =============================================================================
@@ -1377,6 +1361,29 @@ textarea:disabled {
   font-size: 12px;
 }
 
+/* Matches offered under the fields as they are typed, inside the form grid
+   rather than floating over it, so they sit with the section they refer to. */
+.lookup.suggestions {
+  margin-bottom: 0;
+  border-color: var(--success-line);
+}
+
+.lookup.suggestions .link-button {
+  justify-self: start;
+}
+
+/* Why a suggestion matched: an identity-level match, shown beside the name. */
+.result-tag {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--success);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
 /* =============================================================================
    Summary
    ========================================================================== */
@@ -1856,7 +1863,7 @@ textarea:disabled {
     gap: 14px;
   }
 
-  .status-pill {
+  .toolbar-actions {
     align-self: flex-start;
   }
 

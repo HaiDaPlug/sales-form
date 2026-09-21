@@ -16,11 +16,23 @@ export type StepProps<T> = {
  * every step. Rendered like a field so it sits in the grid, styled so it does
  * not look like an input waiting to be typed in.
  */
-export function ReadOnlyField({ label, value, className }: { label: string; value: string; className?: string }) {
+export function ReadOnlyField({
+  label,
+  value,
+  className,
+  hint
+}: {
+  label: string;
+  value: string;
+  className?: string;
+  /** Why the value cannot be edited here, e.g. that it belongs to a linked record. */
+  hint?: string;
+}) {
   return (
     <div className={`field ${className ?? ""}`}>
       <FieldLabel label={label} />
       <div className="readonly-value">{value}</div>
+      {hint && <span className="field-hint">{hint}</span>}
     </div>
   );
 }

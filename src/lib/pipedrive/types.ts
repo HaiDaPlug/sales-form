@@ -118,4 +118,7 @@ export type SearchHit = {
   organizationNumber?: string;
   organizationId?: CrmRecordId;
   organizationName?: string;
+  /** The contact a prospect or deal is attached to, so linking one can fill the signatory. */
+  personId?: CrmRecordId;
+  personName?: string;
 };
