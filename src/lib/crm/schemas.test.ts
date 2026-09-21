@@ -415,6 +415,15 @@ describe("contractStepSchema (S25)", () => {
     expect(result.includeMediacleaningDocuments).toBe(false);
   });
 
+  it("defaults the contract type to the first template, so older requests still print", () => {
+    expect(contractStepSchema.parse(contract()).templateId).toBe("template-1");
+  });
+
+  it("accepts a known contract type and rejects an unknown one", () => {
+    expect(contractStepSchema.safeParse(contract({ templateId: "template-2" })).success).toBe(true);
+    expect(contractStepSchema.safeParse(contract({ templateId: "template-9" })).success).toBe(false);
+  });
+
   /**
    * The contract is uploaded to the customer's organization, which is where it
    * is sent for signature from, so a contract with no customer record has

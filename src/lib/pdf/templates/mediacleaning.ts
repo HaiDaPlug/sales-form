@@ -11,30 +11,31 @@ export type MediacleaningTemplate = {
   id: string;
   cancellation: {
     title: string;
-    subtitle: (index: number, total: number) => string;
-    draftNotice: string;
+    /** Under the title of each letter; carries the customer's name, never "Utkast". */
+    subtitle: (data: MediacleaningStepInput, index: number, total: number) => string;
     paragraphs: (data: MediacleaningStepInput, supplier: Supplier) => string[];
     signatureLabel: string;
   };
-  agreementSummary: {
+  /** The closing page listing every supplier the letters went to. */
+  summary: {
     title: string;
-    subtitle: string;
-    draftNotice: string;
+    subtitle: (data: MediacleaningStepInput) => string;
     supplierHeading: string;
     noSuppliersText: string;
   };
 };
 
 /**
- * Safe placeholder until the client confirms the supplied Mediacleaning
- * template. It remains visibly marked as a draft and can be swapped wholesale.
+ * Placeholder until the client supplies the approved Mediacleaning wording;
+ * swapped wholesale when it arrives. Named after the customer throughout: the
+ * client asked for the "Utkast" marks to go, and for the summary page to be
+ * headed "Uppsägningar" and included in every delivery.
  */
 export const draftMediacleaningTemplate: MediacleaningTemplate = {
   id: "digital-kontakt-mediacleaning-draft-v1",
   cancellation: {
     title: "Uppsägning av avtal",
-    subtitle: (index, total) => `Utkast ${index + 1} av ${total}`,
-    draftNotice: "Texten ska stämmas av mot kundens godkända Mediacleaning-mall före utskick.",
+    subtitle: (data, index, total) => `${data.companyName} · ${index + 1} av ${total}`,
     paragraphs: (data, supplier) => [
       `Härmed säger ${data.companyName} upp samtliga avtal och abonnemang hos ${supplier.name}. ` +
         "Uppsägningen ska gälla från tidigast möjliga datum enligt tillämpliga avtalsvillkor.",
@@ -43,11 +44,10 @@ export const draftMediacleaningTemplate: MediacleaningTemplate = {
     ],
     signatureLabel: "Kundens underskrift eller namn"
   },
-  agreementSummary: {
-    title: "Avtalssammanställning",
-    subtitle: "Mediacleaning - utkast",
-    draftNotice: "Sammanställningen är ett arbetsunderlag och ska kontrolleras av säljaren.",
-    supplierHeading: "Avtal och leverantörer som ska hanteras",
+  summary: {
+    title: "Uppsägningar",
+    subtitle: (data) => data.companyName,
+    supplierHeading: "Avtal och leverantörer som sagts upp",
     noSuppliersText: "Inga leverantörer har lagts till."
   }
 };

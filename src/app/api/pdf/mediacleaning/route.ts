@@ -49,7 +49,6 @@ export async function POST(request: NextRequest) {
         "Content-Type": pdf.contentType,
         "Content-Disposition": `attachment; filename="${pdf.fileName}"`,
         "X-Document-File-Name": pdf.fileName,
-        "X-Document-Draft": "true",
         ...attachmentHeaders(attachment)
       }
     });
