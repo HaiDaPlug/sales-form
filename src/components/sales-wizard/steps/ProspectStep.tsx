@@ -9,11 +9,18 @@ import {
 } from "@/components/sales-wizard/fields";
 import { DateField } from "@/components/sales-wizard/DateField";
 import { LookupBox } from "@/components/sales-wizard/LookupBox";
+import { SuggestionBox } from "@/components/sales-wizard/SuggestionBox";
+import { describeOrganizationMatch, describePersonMatch, searchTerms } from "@/components/sales-wizard/matching";
+import { fetchOrganizationProfile } from "@/components/sales-wizard/profiles";
 import { prospectTitle } from "@/lib/crm/prospect";
-import type { ProspectStepData } from "@/lib/crm/types";
+import type { CrmRecordId, ProspectStepData } from "@/lib/crm/types";
+import type { SearchHit } from "@/lib/pipedrive/types";
 
 /** Recordings of sales calls. The server enforces the same list and the size cap. */
 export const AUDIO_ACCEPT = "audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/ogg,.mp3,.m4a,.wav,.ogg";
+
+/** Shown under a name that belongs to a linked Pipedrive record. */
+const LINKED_HINT = "Hämtat från Pipedrive. Koppla loss posten ovan för att ange en annan.";
 
 export function ProspectStep({
   data,
@@ -28,45 +35,73 @@ export function ProspectStep({
   onAudioFileChange: (file: File | null) => void;
 }) {
   const organizationName = data.organization.name.trim();
+  const personLinked = data.person.id !== undefined;
+  const organizationLinked = data.organization.id !== undefined;
+
+  /**
+   * Links an organization and fills the form from its record.
+   *
+   * The name and id are written at once so the link shows immediately; the
+   * rest follows when the profile arrives. Values Pipedrive holds replace what
+   * was typed — the seller picked this record to use its details — while a
+   * blank in Pipedrive keeps whatever the seller had entered.
+   */
+  async function linkOrganization(organizationId: CrmRecordId, name: string, base: ProspectStepData = data) {
+    const linked: ProspectStepData = { ...base, organization: { ...base.organization, id: organizationId, name } };
+    onChange(linked);
+
+    const profile = await fetchOrganizationProfile(organizationId);
+    if (!profile) return;
+
+    onChange({
+      ...linked,
+      organization: {
+        ...linked.organization,
+        name: profile.name || name,
+        organizationNumber: profile.organizationNumber ?? linked.organization.organizationNumber,
+        website: profile.website ?? linked.organization.website,
+        address: profile.address ?? linked.organization.address,
+        city: profile.city ?? linked.organization.city
+      }
+    });
+  }
+
+  /** Links a contact and, when Pipedrive knows their organization, that too. */
+  function linkPerson(hit: SearchHit) {
+    const withPerson: ProspectStepData = {
+      ...data,
+      person: {
+        ...data.person,
+        id: hit.id,
+        name: hit.name,
+        email: hit.email ?? data.person.email,
+        phone: hit.phone ?? data.person.phone,
+        organizationId: hit.organizationId
+      }
+    };
+
+    if (hit.organizationId !== undefined && hit.organizationName) {
+      void linkOrganization(hit.organizationId, hit.organizationName, withPerson);
+    } else {
+      onChange(withPerson);
+    }
+  }
 
   return (
     <>
       <LookupBox
         title="Koppla befintlig person"
         endpoint="/api/pipedrive/persons/search"
-        selectedLabel={data.person.id ? `${data.person.name} (ID ${data.person.id})` : undefined}
+        selectedLabel={personLinked ? `${data.person.name} (ID ${data.person.id})` : undefined}
         onClear={() => onChange({ ...data, person: { ...data.person, id: undefined, organizationId: undefined } })}
-        onSelect={(hit) =>
-          onChange({
-            ...data,
-            person: {
-              ...data.person,
-              id: hit.id,
-              name: hit.name,
-              email: hit.email ?? data.person.email,
-              phone: hit.phone ?? data.person.phone,
-              organizationId: hit.organizationId
-            }
-          })
-        }
+        onSelect={linkPerson}
       />
       <LookupBox
         title="Koppla befintlig organisation"
         endpoint="/api/pipedrive/organizations/search"
-        selectedLabel={data.organization.id ? `${data.organization.name} (ID ${data.organization.id})` : undefined}
+        selectedLabel={organizationLinked ? `${data.organization.name} (ID ${data.organization.id})` : undefined}
         onClear={() => onChange({ ...data, organization: { ...data.organization, id: undefined } })}
-        onSelect={(hit) =>
-          onChange({
-            ...data,
-            organization: {
-              ...data.organization,
-              id: hit.id,
-              name: hit.name,
-              address: hit.address ?? data.organization.address,
-              organizationNumber: hit.organizationNumber ?? data.organization.organizationNumber
-            }
-          })
-        }
+        onSelect={(hit) => void linkOrganization(hit.id, hit.name)}
       />
 
       <p className="hint">
@@ -74,7 +109,14 @@ export function ProspectStep({
       </p>
 
       <FormSection title="Kontakt och organisation">
-        <TextField required label="Kontaktperson" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
+        {/* The name is the linked record's own once one is chosen. Editing it
+            while linked is what put "Falafel AB" on Kebab AB's record: the
+            label changed, the id underneath did not. */}
+        {personLinked ? (
+          <ReadOnlyField label="Kontaktperson" value={data.person.name} hint={LINKED_HINT} />
+        ) : (
+          <TextField required label="Kontaktperson" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
+        )}
         <TextField required label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <SelectField
           label="Typ av telefonnummer"
@@ -101,12 +143,29 @@ export function ProspectStep({
             onChange({ ...data, person: { ...data.person, emailType: emailType as ProspectStepData["person"]["emailType"] } })
           }
         />
-        <TextField
-          required
-          label="Organisation"
-          value={data.organization.name}
-          onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
-        />
+
+        {/* Offered as the contact is typed, so a customer who already exists is
+            found without the seller having to think to search. */}
+        {!personLinked && (
+          <SuggestionBox
+            title="Liknande kontakter finns i Pipedrive"
+            endpoint="/api/pipedrive/persons/search"
+            terms={searchTerms(data.person.name, data.person.email, data.person.phone)}
+            describe={(hit) => describePersonMatch(data.person, hit)}
+            onSelect={linkPerson}
+          />
+        )}
+
+        {organizationLinked ? (
+          <ReadOnlyField label="Organisation" value={data.organization.name} hint={LINKED_HINT} />
+        ) : (
+          <TextField
+            required
+            label="Organisation"
+            value={data.organization.name}
+            onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
+          />
+        )}
         <TextField
           required
           label="Webbplats"
@@ -136,6 +195,16 @@ export function ProspectStep({
           value={data.organization.address}
           onChange={(address) => onChange({ ...data, organization: { ...data.organization, address } })}
         />
+
+        {!organizationLinked && (
+          <SuggestionBox
+            title="Liknande organisationer finns i Pipedrive"
+            endpoint="/api/pipedrive/organizations/search"
+            terms={searchTerms(data.organization.name, data.organization.organizationNumber)}
+            describe={(hit) => describeOrganizationMatch(data.organization, hit)}
+            onSelect={(hit) => void linkOrganization(hit.id, hit.name)}
+          />
+        )}
       </FormSection>
 
       <FormSection title="Prospekt">

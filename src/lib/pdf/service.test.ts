@@ -8,6 +8,7 @@ import {
   generateContractPdf,
   generateMediacleaningPdf
 } from "@/lib/pdf/service";
+import { CONTRACT_TEMPLATES, resolveContractTemplate } from "@/lib/pdf/templates/contract";
 import { draftMediacleaningTemplate } from "@/lib/pdf/templates/mediacleaning";
 import type { ContractStepInput, MediacleaningStepInput } from "@/lib/crm/schemas";
 
@@ -61,23 +62,23 @@ describe("generateMediacleaningPdf (S18, S24)", () => {
     await expect(pageCount(result.blob)).resolves.toBeGreaterThan(0);
   });
 
-  it("writes one cancellation page per supplier (S18)", async () => {
+  it("writes one cancellation page per supplier, closed by the summary page (S18)", async () => {
     const result = await generateMediacleaningPdf(
       mediacleaning({
         suppliers: [supplier({ name: "Eniro" }), supplier({ name: "Hitta.se" }), supplier({ name: "Merinfo" })]
       })
     );
 
-    expect(await pageCount(result.blob)).toBe(3);
+    expect(await pageCount(result.blob)).toBe(4);
   });
 
-  it("adds a page for the agreement summary when both are selected (S24)", async () => {
-    const result = await generateMediacleaningPdf(
-      mediacleaning({ documentTypes: ["cancellation", "agreementSummary"] })
-    );
+  it("always includes the 'Uppsägningar' summary, whether or not it was selected (S24)", async () => {
+    const selected = await generateMediacleaningPdf(mediacleaning({ documentTypes: ["cancellation", "agreementSummary"] }));
+    const unselected = await generateMediacleaningPdf(mediacleaning({ documentTypes: ["cancellation"] }));
 
-    // One cancellation plus one summary.
-    expect(await pageCount(result.blob)).toBe(2);
+    // One cancellation plus one summary, either way.
+    expect(await pageCount(selected.blob)).toBe(2);
+    expect(await pageCount(unselected.blob)).toBe(2);
   });
 
   it("produces only the summary when no cancellation is selected", async () => {
@@ -88,10 +89,11 @@ describe("generateMediacleaningPdf (S18, S24)", () => {
     expect(await pageCount(result.blob)).toBe(1);
   });
 
-  it("puts the customer name and date in the file name", async () => {
+  it("names the file after the customer and the date, with no draft mark", async () => {
     const result = await generateMediacleaningPdf(mediacleaning());
 
-    expect(result.fileName).toMatch(/^Uppsagningar_Andersson_AB_\d{4}-\d{2}-\d{2}_utkast\.pdf$/);
+    expect(result.fileName).toMatch(/^Uppsagningar_Andersson_AB_\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(result.fileName.toLowerCase()).not.toContain("utkast");
   });
 
   it("folds Swedish characters in the file name instead of dropping them", async () => {
@@ -100,12 +102,20 @@ describe("generateMediacleaningPdf (S18, S24)", () => {
     expect(result.fileName).toContain("Akessons_Maleri");
   });
 
-  it("names the file after the summary when only the summary is produced", async () => {
+  it("names a summary-only file the same way", async () => {
     const result = await generateMediacleaningPdf(
       mediacleaning({ documentTypes: ["agreementSummary"], suppliers: [] })
     );
 
-    expect(result.fileName).toMatch(/^Avtalssammanstallning_/);
+    expect(result.fileName).toMatch(/^Uppsagningar_/);
+  });
+
+  it("titles the summary page 'Uppsägningar' and subtitles the letters with the customer", () => {
+    const data = mediacleaning();
+
+    expect(draftMediacleaningTemplate.summary.title).toBe("Uppsägningar");
+    expect(draftMediacleaningTemplate.summary.subtitle(data)).toBe("Andersson AB");
+    expect(draftMediacleaningTemplate.cancellation.subtitle(data, 0, 3)).toBe("Andersson AB · 1 av 3");
   });
 
   it("renders a personnummer customer without failing on the identity field", async () => {
@@ -113,7 +123,7 @@ describe("generateMediacleaningPdf (S18, S24)", () => {
       mediacleaning({ companyName: "Anna Andersson", organizationNumber: "850101-1234" })
     );
 
-    await expect(pageCount(result.blob)).resolves.toBe(1);
+    await expect(pageCount(result.blob)).resolves.toBe(2);
   });
 
   it("accepts a replaceable client template without changing the renderer", async () => {
@@ -126,7 +136,7 @@ describe("generateMediacleaningPdf (S18, S24)", () => {
       }
     });
 
-    await expect(pageCount(result.blob)).resolves.toBe(1);
+    await expect(pageCount(result.blob)).resolves.toBe(2);
   });
 });
 
@@ -138,10 +148,25 @@ describe("generateContractPdf (S22)", () => {
     await expect(pageCount(result.blob)).resolves.toBeGreaterThan(0);
   });
 
-  it("puts the customer name and date in the file name", async () => {
+  it("names the file after the customer and the date, with no draft mark", async () => {
     const result = await generateContractPdf(contract(), seller);
 
-    expect(result.fileName).toMatch(/^Avtal_Andersson_AB_\d{4}-\d{2}-\d{2}_utkast\.pdf$/);
+    expect(result.fileName).toMatch(/^Avtal_Andersson_AB_\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(result.fileName.toLowerCase()).not.toContain("utkast");
+  });
+
+  it.each(CONTRACT_TEMPLATES.map((template) => [template.id, template.label]))(
+    "renders contract type %s (%s) as a valid PDF",
+    async (templateId) => {
+      const result = await generateContractPdf(contract({ templateId }), seller);
+
+      await expect(pageCount(result.blob)).resolves.toBeGreaterThan(0);
+    }
+  );
+
+  it("falls back to the first contract type for a request that predates the selector", () => {
+    expect(resolveContractTemplate(undefined)).toBe(CONTRACT_TEMPLATES[0]);
+    expect(resolveContractTemplate("template-2").label).toBe("Avtalstyp 2");
   });
 
   it("renders every included service without failing", async () => {
@@ -170,6 +195,7 @@ describe("combined contract and Mediacleaning package (5.4)", () => {
       (await pageCount(contractPdf.blob)) + (await pageCount(mediaPdf.blob))
     );
     expect(combined.fileName).toMatch(/^Avtal_och_Mediacleaning_Andersson_AB_/);
+    expect(combined.fileName.toLowerCase()).not.toContain("utkast");
   });
 });
 
@@ -178,13 +204,13 @@ describe("buildMediacleaningNote (S21)", () => {
   it("names the suppliers, documents and file", () => {
     const note = buildMediacleaningNote(
       mediacleaning({ suppliers: [supplier({ name: "Eniro" }), supplier({ name: "Merinfo" })] }),
-      "Uppsagningar_Andersson_AB_2026-08-14_utkast.pdf"
+      "Uppsagningar_Andersson_AB_2026-08-14.pdf"
     );
 
     expect(note).toContain("Mediacleaning genomförd");
     expect(note).toContain("Leverantörer: Eniro, Merinfo");
     expect(note).toContain("Dokument: Uppsägning");
-    expect(note).toContain("Fil: Uppsagningar_Andersson_AB_2026-08-14_utkast.pdf");
+    expect(note).toContain("Fil: Uppsagningar_Andersson_AB_2026-08-14.pdf");
   });
 
   it("includes the date", () => {
@@ -207,6 +233,7 @@ describe("buildContractNote (S22)", () => {
     const note = buildContractNote(contract(), seller, "avtal.pdf");
 
     expect(note).toContain("Avtalssammanställning genererad");
+    expect(note).toContain("Avtalstyp: Avtalstyp 1");
     expect(note).toContain("Pris: 1200");
     expect(note).toContain("Betalningsintervall: Månadsvis");
     expect(note).toContain("Bindningstid: 12 månader");

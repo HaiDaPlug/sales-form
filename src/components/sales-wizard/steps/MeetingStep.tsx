@@ -3,8 +3,15 @@ import { FormSection, ReadOnlyField, TextArea, TextField, type StepProps } from 
 import { DateField } from "@/components/sales-wizard/DateField";
 import { SlotPicker } from "@/components/sales-wizard/SlotPicker";
 import { LookupBox, type ConflictChoice, type FieldConflict } from "@/components/sales-wizard/LookupBox";
+import { SuggestionBox } from "@/components/sales-wizard/SuggestionBox";
+import { describeOrganizationMatch, describePersonMatch, searchTerms } from "@/components/sales-wizard/matching";
+import { fetchOrganizationProfile } from "@/components/sales-wizard/profiles";
 import { findPersonConflicts } from "@/components/sales-wizard/utils";
-import type { MeetingStepData } from "@/lib/crm/types";
+import type { CrmRecordId, MeetingStepData } from "@/lib/crm/types";
+import type { SearchHit } from "@/lib/pipedrive/types";
+
+/** Shown under a name that belongs to a linked Pipedrive record. */
+const LINKED_HINT = "Hämtat från Pipedrive. Koppla loss posten ovan för att ange en annan.";
 
 export function MeetingStep({
   data,
@@ -18,6 +25,9 @@ export function MeetingStep({
   // Differences between the typed contact details and the linked record. Held
   // in the step rather than the wizard: they are resolved here and never submitted.
   const [conflicts, setConflicts] = useState<FieldConflict[]>([]);
+
+  const personLinked = data.person.id !== undefined;
+  const organizationLinked = data.organization?.id !== undefined;
 
   /**
    * A new organization is being registered as part of this booking. Its website
@@ -36,61 +46,110 @@ export function MeetingStep({
     setConflicts((current) => current.filter((item) => item.field !== conflict.field));
   }
 
+  /**
+   * Links an organization and fills the form from its record, so nothing
+   * Pipedrive already knows — the organisationsnummer above all — is retyped.
+   * The link shows at once; the details follow when the profile arrives.
+   */
+  async function linkOrganization(organizationId: CrmRecordId, name: string, base: MeetingStepData = data) {
+    const linked: MeetingStepData = { ...base, organization: { ...base.organization, id: organizationId, name } };
+    onChange(linked);
+
+    const profile = await fetchOrganizationProfile(organizationId);
+    if (!profile) return;
+
+    onChange({
+      ...linked,
+      organization: {
+        ...linked.organization,
+        name: profile.name || name,
+        organizationNumber: profile.organizationNumber ?? linked.organization?.organizationNumber,
+        website: profile.website ?? linked.organization?.website,
+        address: profile.address ?? linked.organization?.address,
+        city: profile.city ?? linked.organization?.city
+      }
+    });
+  }
+
+  function linkPerson(hit: SearchHit) {
+    // Recorded before the record's values overwrite the typed ones, so the
+    // seller can still choose to keep what they entered.
+    setConflicts(findPersonConflicts(data.person, hit));
+
+    const withPerson: MeetingStepData = {
+      ...data,
+      person: {
+        ...data.person,
+        id: hit.id,
+        name: hit.name,
+        email: hit.email ?? data.person.email,
+        phone: hit.phone ?? data.person.phone,
+        organizationId: hit.organizationId
+      }
+    };
+
+    // A contact that belongs to an organization brings it along, details and all.
+    if (hit.organizationId !== undefined && hit.organizationName) {
+      void linkOrganization(hit.organizationId, hit.organizationName, withPerson);
+    } else {
+      onChange(withPerson);
+    }
+  }
+
   return (
     <>
       <LookupBox
         title="Koppla befintlig person"
         endpoint="/api/pipedrive/persons/search"
-        selectedLabel={data.person.id ? `${data.person.name} (ID ${data.person.id})` : undefined}
+        selectedLabel={personLinked ? `${data.person.name} (ID ${data.person.id})` : undefined}
         conflicts={conflicts}
         onResolveConflict={resolveConflict}
         onClear={() => {
           setConflicts([]);
           onChange({ ...data, person: { ...data.person, id: undefined, organizationId: undefined } });
         }}
-        onSelect={(hit) => {
-          // Recorded before the record's values overwrite the typed ones, so the
-          // seller can still choose to keep what they entered.
-          setConflicts(findPersonConflicts(data.person, hit));
-
-          onChange({
-            ...data,
-            person: {
-              ...data.person,
-              id: hit.id,
-              name: hit.name,
-              email: hit.email ?? data.person.email,
-              phone: hit.phone ?? data.person.phone,
-              organizationId: hit.organizationId
-            },
-            organization: hit.organizationName
-              ? { ...data.organization, id: hit.organizationId, name: hit.organizationName }
-              : data.organization
-          });
-        }}
+        onSelect={linkPerson}
       />
       <LookupBox
         title="Koppla befintlig organisation"
         endpoint="/api/pipedrive/organizations/search"
-        selectedLabel={data.organization?.id ? `${data.organization.name} (ID ${data.organization.id})` : undefined}
+        selectedLabel={organizationLinked ? `${data.organization?.name} (ID ${data.organization?.id})` : undefined}
         onClear={() => onChange({ ...data, organization: { ...data.organization, id: undefined } })}
-        onSelect={(hit) =>
-          onChange({
-            ...data,
-            organization: { ...data.organization, id: hit.id, name: hit.name, address: hit.address }
-          })
-        }
+        onSelect={(hit) => void linkOrganization(hit.id, hit.name)}
       />
 
       <FormSection title="Kontakt">
-        <TextField required label="Namn" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
+        {/* A linked record's name is its own; it stops being editable so the
+            label on screen cannot drift from the id underneath. */}
+        {personLinked ? (
+          <ReadOnlyField label="Namn" value={data.person.name} hint={LINKED_HINT} />
+        ) : (
+          <TextField required label="Namn" value={data.person.name} onChange={(name) => onChange({ ...data, person: { ...data.person, name } })} />
+        )}
         <TextField label="Telefon" value={data.person.phone} onChange={(phone) => onChange({ ...data, person: { ...data.person, phone } })} />
         <TextField label="E-post" value={data.person.email} onChange={(email) => onChange({ ...data, person: { ...data.person, email } })} />
-        <TextField
-          label="Organisation"
-          value={data.organization?.name}
-          onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
-        />
+
+        {/* A contact who has been saved before is offered as their details are
+            typed, together with their organization. */}
+        {!personLinked && (
+          <SuggestionBox
+            title="Liknande kontakter finns i Pipedrive"
+            endpoint="/api/pipedrive/persons/search"
+            terms={searchTerms(data.person.name, data.person.email, data.person.phone)}
+            describe={(hit) => describePersonMatch(data.person, hit)}
+            onSelect={linkPerson}
+          />
+        )}
+
+        {organizationLinked ? (
+          <ReadOnlyField label="Organisation" value={data.organization?.name ?? ""} hint={LINKED_HINT} />
+        ) : (
+          <TextField
+            label="Organisation"
+            value={data.organization?.name}
+            onChange={(name) => onChange({ ...data, organization: { ...data.organization, name } })}
+          />
+        )}
         {/* Shown only while a new organization is being registered: the client
             requires a website for one, and an existing record already has its own. */}
         {registersNewOrganization && (
@@ -113,6 +172,16 @@ export function MeetingStep({
           value={data.organization?.address}
           onChange={(address) => onChange({ ...data, organization: { ...data.organization, address } })}
         />
+
+        {!organizationLinked && (
+          <SuggestionBox
+            title="Liknande organisationer finns i Pipedrive"
+            endpoint="/api/pipedrive/organizations/search"
+            terms={searchTerms(data.organization?.name, data.organization?.organizationNumber)}
+            describe={(hit) => describeOrganizationMatch(data.organization ?? {}, hit)}
+            onSelect={(hit) => void linkOrganization(hit.id, hit.name)}
+          />
+        )}
       </FormSection>
 
       <FormSection title="Möte">

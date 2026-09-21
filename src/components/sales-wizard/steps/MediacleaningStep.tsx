@@ -1,9 +1,10 @@
 import { CheckLabel, FieldLabel, FormSection, ReadOnlyField, TextArea, TextField, type StepProps } from "@/components/sales-wizard/fields";
+// CheckLabel stays in use for the "register as new organization" choice.
 import { ContactPicker } from "@/components/sales-wizard/ContactPicker";
 import { LookupBox } from "@/components/sales-wizard/LookupBox";
 import { SupplierEditor } from "@/components/sales-wizard/SupplierEditor";
-import { toggleDocumentType } from "@/components/sales-wizard/utils";
-import type { MediacleaningStepData } from "@/lib/crm/types";
+import { fetchOrganizationProfile } from "@/components/sales-wizard/profiles";
+import type { CrmRecordId, MediacleaningStepData } from "@/lib/crm/types";
 import type { SearchHit } from "@/lib/pipedrive/types";
 
 export function MediacleaningStep({ data, onChange, sellerName }: StepProps<MediacleaningStepData>) {
@@ -14,53 +15,65 @@ export function MediacleaningStep({ data, onChange, sellerName }: StepProps<Medi
   /**
    * Fills the customer fields from the Pipedrive record the seller picked, so
    * nothing that already exists there has to be retyped.
+   *
+   * Overwritten, not merged: these are the customer's real details, and the
+   * seller picked this record precisely to use them. A failed fetch keeps the
+   * link and leaves the rest to the seller.
    */
-  async function fillFromOrganization(organizationId: string | number) {
-    try {
-      const response = await fetch(`/api/pipedrive/organizations/${encodeURIComponent(String(organizationId))}`);
-      const payload = (await response.json()) as {
-        ok: boolean;
-        data?: { name: string; organizationNumber?: string; address?: string; city?: string };
-      };
-
-      if (!response.ok || !payload.ok || !payload.data) return;
-
-      const profile = payload.data;
-
-      onChange({
-        ...data,
-        organizationId,
-        // Overwritten, not merged: these are the customer's real details, and
-        // the seller picked this record precisely to use them.
-        companyName: profile.name,
-        organizationNumber: profile.organizationNumber ?? data.organizationNumber,
-        address: profile.address ?? data.address,
-        city: profile.city ?? data.city,
-        leadId: "",
-        dealId: "",
-        signerPersonId: undefined,
-        signerName: "",
-        createOrganization: false
-      });
-    } catch {
-      // The lookup already wrote the id and name; leaving the rest to the
-      // seller is better than losing the selection over a failed fetch.
-    }
-  }
-
-  function linkSale(hit: SearchHit, kind: "lead" | "deal") {
-    const organizationId = hit.organizationId ?? data.organizationId;
+  async function fillFromOrganization(organizationId: CrmRecordId, base: MediacleaningStepData = data) {
+    const profile = await fetchOrganizationProfile(organizationId);
+    if (!profile) return;
 
     onChange({
+      ...base,
+      organizationId,
+      companyName: profile.name,
+      organizationNumber: profile.organizationNumber ?? base.organizationNumber,
+      address: profile.address ?? base.address,
+      city: profile.city ?? base.city,
+      createOrganization: false
+    });
+  }
+
+  function linkOrganization(organizationId: CrmRecordId, name: string) {
+    // A different organization means a different sale and signatory.
+    const linked: MediacleaningStepData = {
+      ...data,
+      organizationId,
+      companyName: name,
+      leadId: "",
+      dealId: "",
+      signerPersonId: undefined,
+      signerName: "",
+      createOrganization: false
+    };
+
+    onChange(linked);
+    void fillFromOrganization(organizationId, linked);
+  }
+
+  /**
+   * Links a prospect or deal and everything it already names: its organization,
+   * filled from the record, and its contact as the signatory.
+   */
+  function linkSale(hit: SearchHit, kind: "lead" | "deal") {
+    const organizationId = hit.organizationId ?? data.organizationId;
+    const changesOrganization = String(organizationId ?? "") !== String(data.organizationId ?? "");
+
+    const linked: MediacleaningStepData = {
       ...data,
       leadId: kind === "lead" ? String(hit.id) : "",
       dealId: kind === "deal" ? hit.id : "",
       organizationId,
-      companyName: data.companyName || hit.organizationName || ""
-    });
+      companyName: hit.organizationName ?? data.companyName,
+      signerPersonId: hit.personId ?? (changesOrganization ? undefined : data.signerPersonId),
+      signerName: hit.personName ?? (changesOrganization ? "" : data.signerName),
+      createOrganization: false
+    };
 
-    // A sale names its customer, so the company details follow from it.
-    if (organizationId && !data.companyName) void fillFromOrganization(organizationId);
+    onChange(linked);
+
+    if (organizationId) void fillFromOrganization(organizationId, linked);
   }
 
   return (
@@ -72,7 +85,7 @@ export function MediacleaningStep({ data, onChange, sellerName }: StepProps<Medi
         onClear={() =>
           onChange({ ...data, organizationId: "", leadId: "", dealId: "", signerPersonId: undefined, signerName: "" })
         }
-        onSelect={(hit) => void fillFromOrganization(hit.id)}
+        onSelect={(hit) => linkOrganization(hit.id, hit.name)}
       />
 
       <LookupBox
@@ -130,20 +143,16 @@ export function MediacleaningStep({ data, onChange, sellerName }: StepProps<Medi
           />
         )}
 
+        {/* One document, always the same shape: a cancellation letter per
+            supplier, followed by the "Uppsägningar" summary page. The client
+            asked for the summary to be part of every delivery, so there is
+            nothing left to tick. */}
         <div className="field full">
-          <FieldLabel label="Dokument" required />
-          <div className="checks">
-            <CheckLabel
-              label="Uppsägning"
-              checked={data.documentTypes.includes("cancellation")}
-              onChange={(checked) => toggleDocumentType(data, onChange, "cancellation", checked)}
-            />
-            <CheckLabel
-              label="Avtalssammanfattning"
-              checked={data.documentTypes.includes("agreementSummary")}
-              onChange={(checked) => toggleDocumentType(data, onChange, "agreementSummary", checked)}
-            />
-          </div>
+          <FieldLabel label="Dokument" />
+          <span className="field-hint">
+            Ett uppsägningsbrev per leverantör nedan, samt sammanställningen Uppsägningar. Filen namnges efter
+            kunden.
+          </span>
         </div>
       </FormSection>
 

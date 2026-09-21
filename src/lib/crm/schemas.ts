@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IDENTITY_NUMBER_MESSAGE, normalizeIdentityNumber } from "@/lib/crm/identityNumber";
+import { CONTRACT_TEMPLATE_IDS, DEFAULT_CONTRACT_TEMPLATE_ID } from "@/lib/pdf/templates/contract";
 
 const requiredText = (label: string) => z.string().trim().min(1, `${label} krävs`);
 const optionalText = z.string().trim().optional();
@@ -296,6 +297,14 @@ export const mediacleaningStepSchema = z
   });
 
 export const contractStepSchema = z.object({
+  /**
+   * Which contract text to print. The client has more than one kind of
+   * agreement; the seller picks. Defaulted so a request that predates the
+   * selector still produces the first type rather than failing.
+   */
+  templateId: z.enum(CONTRACT_TEMPLATE_IDS, { errorMap: () => ({ message: "Välj avtalstyp" }) }).default(
+    DEFAULT_CONTRACT_TEMPLATE_ID
+  ),
   companyName: requiredText("Företagsnamn"),
   organizationNumber,
   /** Chosen from the organization's people, like the Mediacleaning signatory. */

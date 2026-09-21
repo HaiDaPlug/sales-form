@@ -7,6 +7,7 @@ import {
 } from "pdf-lib";
 import type { ContractStepInput, MediacleaningStepInput } from "@/lib/crm/schemas";
 import type { SellerIdentity } from "@/lib/crm/types";
+import { resolveContractTemplate, type ContractTemplate } from "@/lib/pdf/templates/contract";
 import {
   draftMediacleaningTemplate,
   type MediacleaningTemplate
@@ -25,13 +26,14 @@ const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 const BRAND_NAVY = rgb(22 / 255, 41 / 255, 68 / 255);
 const ACCENT_BLUE = rgb(33 / 255, 118 / 255, 222 / 255);
 const MUTED = rgb(92 / 255, 105 / 255, 122 / 255);
-const LIGHT = rgb(239 / 255, 243 / 255, 248 / 255);
-const WARNING = rgb(178 / 255, 91 / 255, 0);
 
 /**
- * Produces one cancellation letter per supplier and combines every selected
- * document in one parseable PDF. The copy is deliberately marked as a draft
- * until the client's templates and legal wording have been approved.
+ * Produces one cancellation letter per supplier, closed by the "Uppsägningar"
+ * summary page, in one parseable PDF.
+ *
+ * The summary is always included and the document carries the customer's
+ * name where it used to say "Utkast", both at the client's request. The
+ * wording itself is still the placeholder template until theirs arrives.
  */
 export async function generateMediacleaningPdf(
   data: MediacleaningStepInput,
@@ -42,8 +44,10 @@ export async function generateMediacleaningPdf(
 
   if (data.documentTypes.includes("cancellation")) {
     data.suppliers.forEach((supplier, index) => {
-      writer.startPage(template.cancellation.title, template.cancellation.subtitle(index, data.suppliers.length));
-      writer.draftNotice(template.cancellation.draftNotice);
+      writer.startPage(
+        template.cancellation.title,
+        template.cancellation.subtitle(data, index, data.suppliers.length)
+      );
       writer.keyValue("Datum", today());
 
       writer.heading("Mottagare");
@@ -74,28 +78,25 @@ export async function generateMediacleaningPdf(
     });
   }
 
-  if (data.documentTypes.includes("agreementSummary")) {
-    writer.startPage(template.agreementSummary.title, template.agreementSummary.subtitle);
-    writer.draftNotice(template.agreementSummary.draftNotice);
-    writer.heading("Kunduppgifter");
-    writer.keyValue("Namn/företagsnamn", data.companyName);
-    writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
-    writer.keyValue("Adress", `${data.address}, ${data.city}`);
-    writer.keyValue("Firmatecknare", data.signerName);
+  // The summary closes every delivery, whatever was selected.
+  writer.startPage(template.summary.title, template.summary.subtitle(data));
+  writer.heading("Kunduppgifter");
+  writer.keyValue("Namn/företagsnamn", data.companyName);
+  writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
+  writer.keyValue("Adress", `${data.address}, ${data.city}`);
+  writer.keyValue("Firmatecknare", data.signerName);
 
-    writer.heading(template.agreementSummary.supplierHeading);
-    if (data.suppliers.length === 0) {
-      writer.paragraph(template.agreementSummary.noSuppliersText);
-    } else {
-      data.suppliers.forEach((supplier) => {
-        const details = [supplier.organizationNumber, supplier.noticeAddress].filter(Boolean).join(" - ");
-        writer.bullet(details ? `${supplier.name} - ${details}` : supplier.name);
-      });
-    }
+  writer.heading(template.summary.supplierHeading);
+  if (data.suppliers.length === 0) {
+    writer.paragraph(template.summary.noSuppliersText);
+  } else {
+    data.suppliers.forEach((supplier) => {
+      const details = [supplier.organizationNumber, supplier.noticeAddress].filter(Boolean).join(" - ");
+      writer.bullet(details ? `${supplier.name} - ${details}` : supplier.name);
+    });
   }
 
-  const prefix = data.documentTypes.includes("cancellation") ? "Uppsagningar" : "Avtalssammanstallning";
-  return writer.finish(`${prefix}_${sanitizeFileNamePart(data.companyName)}_${today()}_utkast.pdf`);
+  return writer.finish(`Uppsagningar_${sanitizeFileNamePart(data.companyName)}_${today()}.pdf`, data.companyName);
 }
 
 /** Combines already-rendered PDFs without coupling their individual templates. */
@@ -122,23 +123,30 @@ export async function combinePdfDocuments(
 }
 
 export function combinedContractFileName(companyName: string): string {
-  return `Avtal_och_Mediacleaning_${sanitizeFileNamePart(companyName)}_${today()}_utkast.pdf`;
+  return `Avtal_och_Mediacleaning_${sanitizeFileNamePart(companyName)}_${today()}.pdf`;
 }
 
 /**
- * Creates the documented Digital Kontakt contract-summary structure as PDF.
+ * Creates the contract summary as PDF, in the wording of the contract type
+ * the seller chose.
  *
  * The seller printed on it is the logged-in seller, passed in by the route
- * from the session, so the document can never name a colleague.
+ * from the session, so the document can never name a colleague. No draft
+ * mark anywhere: the seller reviews the document before sending it, so the
+ * client asked for it to be delivered as is, named after the customer.
  */
-export async function generateContractPdf(data: ContractStepInput, seller: SellerIdentity): Promise<GeneratedDocument> {
+export async function generateContractPdf(
+  data: ContractStepInput,
+  seller: SellerIdentity,
+  template: ContractTemplate = resolveContractTemplate(data.templateId)
+): Promise<GeneratedDocument> {
   const document = await PDFDocument.create();
   const writer = await PdfWriter.create(document);
 
-  writer.startPage("Avtalssammanställning", "Digital Kontakt Sverige AB - utkast");
-  writer.draftNotice("Dokumentet ska granskas innan det skickas för signering.");
+  writer.startPage(template.title, template.subtitle);
 
   writer.heading("Avtalsparter");
+  writer.keyValue("Avtalstyp", template.label);
   writer.keyValue("Leverantör", "Digital Kontakt Sverige AB");
   writer.keyValue("Kund", data.companyName);
   writer.keyValue("Organisationsnummer/personnummer", data.organizationNumber);
@@ -147,9 +155,7 @@ export async function generateContractPdf(data: ContractStepInput, seller: Selle
   writer.keyValue("Ansvarig säljare", seller.name);
 
   writer.heading("Avtalets omfattning");
-  writer.paragraph(
-    "Avtalet omfattar de tjänster som anges nedan och utgör kundens sammanställning av den beställda digitala leveransen."
-  );
+  writer.paragraph(template.scope);
 
   writer.heading("Tjänster som ingår");
   data.includedServices.forEach((service) => writer.bullet(service));
@@ -157,21 +163,19 @@ export async function generateContractPdf(data: ContractStepInput, seller: Selle
   writer.heading("Pris och betalningsvillkor");
   writer.keyValue("Pris/kostnad", formatCurrency(data.price));
   writer.keyValue("Betalningsintervall", paymentIntervalLabel(data.paymentInterval));
-  writer.paragraph("Slutliga betalningsvillkor ska kontrolleras och fastställas innan signering.");
+  writer.paragraph(template.paymentTerms);
 
   writer.heading("Avtalstid och uppsägning");
   writer.keyValue("Bindningstid", `${data.bindingPeriodMonths} månader`);
-  writer.paragraph("Avtalets startdag och slutliga uppsägningsvillkor ska bekräftas i det signerade avtalet.");
+  writer.paragraph(template.termAndNotice);
 
   writer.keepTogether(190);
   writer.heading("Godkännande");
-  writer.paragraph(
-    "Genom underskrift bekräftar parterna att uppgifterna ovan har kontrollerats och att den slutliga avtalstexten har godkänts."
-  );
+  writer.paragraph(template.approval);
   writer.signature("För kunden", data.signerName);
   writer.signature("För Digital Kontakt Sverige AB", seller.name);
 
-  return writer.finish(`Avtal_${sanitizeFileNamePart(data.companyName)}_${today()}_utkast.pdf`);
+  return writer.finish(`Avtal_${sanitizeFileNamePart(data.companyName)}_${today()}.pdf`, data.companyName);
 }
 
 export function buildMediacleaningNote(data: MediacleaningStepInput, fileName: string): string {
@@ -195,6 +199,7 @@ export function buildContractNote(data: ContractStepInput, seller: SellerIdentit
   return [
     "Avtalssammanställning genererad",
     `Datum: ${today()}`,
+    `Avtalstyp: ${resolveContractTemplate(data.templateId).label}`,
     `Kund: ${data.companyName} (${data.organizationNumber})`,
     `Firmatecknare/kontaktperson: ${data.signerName}`,
     `Pris: ${data.price}`,
@@ -206,7 +211,7 @@ export function buildContractNote(data: ContractStepInput, seller: SellerIdentit
 }
 
 function documentTypeLabel(type: MediacleaningStepInput["documentTypes"][number]): string {
-  return type === "cancellation" ? "Uppsägning" : "Avtalssammanställning";
+  return type === "cancellation" ? "Uppsägning" : "Uppsägningar (sammanställning)";
 }
 
 function paymentIntervalLabel(interval: ContractStepInput["paymentInterval"]): string {
@@ -240,6 +245,7 @@ class PdfWriter {
   private page!: PDFPage;
   private y = 0;
   private pageTitle = "";
+  private pageSubtitle = "";
 
   private constructor(
     private readonly document: PDFDocument,
@@ -255,19 +261,12 @@ class PdfWriter {
 
   startPage(title: string, subtitle: string): void {
     this.pageTitle = title;
+    this.pageSubtitle = subtitle;
     this.page = this.document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     this.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 92, width: PAGE_WIDTH, height: 92, color: BRAND_NAVY });
     this.page.drawText(pdfText(title), { x: MARGIN, y: PAGE_HEIGHT - 55, size: 20, font: this.bold, color: rgb(1, 1, 1) });
     this.page.drawText(pdfText(subtitle), { x: MARGIN, y: PAGE_HEIGHT - 76, size: 9, font: this.regular, color: rgb(0.8, 0.86, 0.94) });
     this.y = PAGE_HEIGHT - 122;
-  }
-
-  draftNotice(text: string): void {
-    this.ensureSpace(55);
-    this.page.drawRectangle({ x: MARGIN, y: this.y - 38, width: CONTENT_WIDTH, height: 44, color: LIGHT, borderColor: WARNING, borderWidth: 1 });
-    this.page.drawText("UTKAST", { x: MARGIN + 12, y: this.y - 11, size: 9, font: this.bold, color: WARNING });
-    this.drawWrapped(text, MARGIN + 12, this.y - 26, 8.5, CONTENT_WIDTH - 24, this.regular, MUTED, 11);
-    this.y -= 57;
   }
 
   heading(text: string): void {
@@ -317,7 +316,8 @@ class PdfWriter {
     this.y -= 36;
   }
 
-  async finish(fileName: string): Promise<GeneratedDocument> {
+  /** `footerLabel` sits between the company and the page count: the customer's name. */
+  async finish(fileName: string, footerLabel: string): Promise<GeneratedDocument> {
     this.document.setTitle(pdfText(this.pageTitle));
     this.document.setAuthor("Digital Kontakt Sverige AB");
     this.document.setCreator("Digital Kontakt Sales Portal");
@@ -325,8 +325,8 @@ class PdfWriter {
 
     const pages = this.document.getPages();
     pages.forEach((page, index) => {
-      const footer = `Digital Kontakt Sverige AB  |  Utkast  |  Sida ${index + 1} av ${pages.length}`;
-      page.drawText(footer, { x: MARGIN, y: 24, size: 7.5, font: this.regular, color: MUTED });
+      const footer = `Digital Kontakt Sverige AB  |  ${footerLabel}  |  Sida ${index + 1} av ${pages.length}`;
+      page.drawText(pdfText(footer), { x: MARGIN, y: 24, size: 7.5, font: this.regular, color: MUTED });
     });
 
     const bytes = await this.document.save();
@@ -340,7 +340,7 @@ class PdfWriter {
 
   private ensureSpace(height: number): void {
     if (this.y - height >= 54) return;
-    this.startPage(this.pageTitle, "Fortsättning - utkast");
+    this.startPage(this.pageTitle, `${this.pageSubtitle} - fortsättning`);
   }
 
   private drawWrapped(

@@ -19,6 +19,13 @@ import { MeetingStep } from "@/components/sales-wizard/steps/MeetingStep";
 import { ProspectStep } from "@/components/sales-wizard/steps/ProspectStep";
 import { HistoryPanel } from "@/components/sales-wizard/HistoryPanel";
 import { OverlapDialog } from "@/components/sales-wizard/OverlapDialog";
+import { ResetDialog } from "@/components/sales-wizard/ResetDialog";
+import {
+  hydrateContract,
+  hydrateMediacleaning,
+  hydrateMeetingFromProspect,
+  hydrateProspectFromMeeting
+} from "@/components/sales-wizard/hydration";
 import {
   initialContract,
   initialMediacleaning,
@@ -29,12 +36,16 @@ import { useReferenceData } from "@/components/sales-wizard/useReferenceData";
 import { uploadProspectAudio } from "@/components/sales-wizard/uploadAudio";
 import { downloadBlob, formatZodErrors, readRecordId } from "@/components/sales-wizard/utils";
 
-/** The four workflows, in order. `action` is the label of the button that runs one. */
+/**
+ * The four workflows, in order. `action` is the label of the button that runs
+ * one. The prospect comes first: the client's workflow is to register the
+ * customer and then book the meeting, so the booking inherits the customer.
+ */
 type StepKind = keyof WizardData;
 
 const STEPS: { kind: StepKind; label: string; action: string }[] = [
-  { kind: "meeting", label: "Mötesbokning", action: "Boka möte" },
   { kind: "prospect", label: "Skapa prospekt", action: "Skapa prospekt" },
+  { kind: "meeting", label: "Mötesbokning", action: "Boka möte" },
   { kind: "mediacleaning", label: "Mediacleaning", action: "Skapa dokument" },
   { kind: "contract", label: "Avtalsgenerering", action: "Skapa avtal" }
 ];
@@ -67,6 +78,13 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
   const [checkingOverlaps, setCheckingOverlaps] = useState(false);
   /** Bumped when a booking is refused, so the picker re-reads the calendars. */
   const [slotRefreshToken, setSlotRefreshToken] = useState(0);
+  /**
+   * Bumped on every reset and used as the key of the step area, so the step
+   * components remount and drop the state they keep for themselves: a typed
+   * search term, unresolved contact conflicts, a loaded contact list.
+   */
+  const [sessionKey, setSessionKey] = useState(0);
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const reference = useReferenceData();
 
   const active = STEPS[activeStep];
@@ -83,7 +101,12 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
         mediacleaning.companyName ||
         contract.companyName ||
         "Ej valt",
+      // The linked Pipedrive record, shown beside the name: the name alone is
+      // what read "Falafel AB" while the id underneath still pointed at
+      // another customer.
+      customerId: prospect.organization.id ?? meeting.organization?.id,
       person: prospect.person.name || meeting.person.name || contract.signerName || "Ej valt",
+      personId: prospect.person.id ?? meeting.person.id,
       prospect: createdLeadId
         ? `${prospectTitle(prospect.organization.name)} (skapat)`
         : prospect.organization.name
@@ -101,75 +124,52 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
 
   function goToStep(index: number) {
     resetFeedback();
-    hydrateStepFromPrevious(index);
+    hydrateStep(STEPS[index].kind);
     setActiveStep(index);
   }
 
   /**
-   * Carries customer data forward between steps.
-   *
-   * Only fills blanks — a value the seller has already typed into the target
-   * step is never overwritten.
+   * Carries customer data forward into the step being opened. Keyed on the
+   * step rather than its position, so the order of the steps can change
+   * without the carry-over silently pointing at the wrong neighbour. The
+   * functions only fill blanks; see `hydration.ts`.
    */
-  function hydrateStepFromPrevious(index: number) {
-    if (index === 1) {
-      setProspect((current) => ({
-        ...current,
-        person: {
-          ...current.person,
-          id: current.person.id ?? meeting.person.id,
-          name: current.person.name || meeting.person.name,
-          // Meeting fields are optional but the prospect step requires them, so
-          // a missing value carries forward as an empty field for the seller to
-          // fill in — never as `undefined`, which the prospect schema rejects.
-          phone: current.person.phone || meeting.person.phone || "",
-          phoneType: current.person.phoneType || meeting.person.phoneType,
-          email: current.person.email || meeting.person.email || "",
-          emailType: current.person.emailType || meeting.person.emailType,
-          organizationId: current.person.organizationId ?? meeting.person.organizationId
-        },
-        organization: {
-          ...current.organization,
-          id: current.organization.id ?? meeting.organization?.id,
-          name: current.organization.name || meeting.organization?.name || "",
-          website: current.organization.website || meeting.organization?.website || "",
-          address: current.organization.address || meeting.organization?.address || "",
-          city: current.organization.city || meeting.organization?.city || "",
-          organizationNumber:
-            current.organization.organizationNumber || meeting.organization?.organizationNumber || ""
-        },
-        viktigastForKunden: current.viktigastForKunden || meeting.internalComment || ""
-      }));
+  function hydrateStep(kind: StepKind) {
+    if (kind === "prospect") setProspect((current) => hydrateProspectFromMeeting(current, meeting));
+    if (kind === "meeting") setMeeting((current) => hydrateMeetingFromProspect(current, prospect));
+
+    if (kind === "mediacleaning") {
+      setMediacleaning((current) => hydrateMediacleaning(current, { prospect, meeting, createdLeadId }));
     }
 
-    if (index === 2) {
-      setMediacleaning((current) => ({
-        ...current,
-        companyName: current.companyName || prospect.organization.name || meeting.organization?.name || "",
-        organizationNumber: current.organizationNumber || prospect.organization.organizationNumber || "",
-        address: current.address || prospect.organization.address || meeting.organization?.address || "",
-        city: current.city || prospect.organization.city || meeting.organization?.city || "",
-        organizationId: current.organizationId || String(prospect.organization.id ?? meeting.organization?.id ?? ""),
-        leadId: current.leadId || createdLeadId || ""
-      }));
+    if (kind === "contract") {
+      setContract((current) => hydrateContract(current, { prospect, meeting, mediacleaning, createdLeadId }));
     }
+  }
 
-    if (index === 3) {
-      setContract((current) => ({
-        ...current,
-        companyName: current.companyName || prospect.organization.name || mediacleaning.companyName,
-        organizationNumber:
-          current.organizationNumber || prospect.organization.organizationNumber || mediacleaning.organizationNumber,
-        signerName: current.signerName || prospect.person.name || meeting.person.name,
-        address: current.address || prospect.organization.address || mediacleaning.address,
-        price: current.price || prospect.monthlyCost || prospect.value || 0,
-        bindingPeriodMonths: current.bindingPeriodMonths || prospect.bindingPeriodMonths || 12,
-        organizationId: current.organizationId || String(prospect.organization.id ?? mediacleaning.organizationId ?? ""),
-        // The prospect this session created is the one the contract belongs to.
-        leadId: current.leadId || createdLeadId || String(mediacleaning.leadId ?? ""),
-        dealId: current.dealId || String(mediacleaning.dealId ?? "")
-      }));
-    }
+  /**
+   * Starts over for a new customer.
+   *
+   * Everything the previous customer left behind goes: the four steps, the
+   * recording, the prospect this session created, the resolved Pipedrive ids
+   * and the "done" marks. Without this the ids survived a retyped name, and a
+   * prospect entered as one company was attached to the previous one.
+   */
+  function resetSession() {
+    setConfirmingReset(false);
+    setMeeting(initialMeeting);
+    setProspect(initialProspect);
+    setMediacleaning(initialMediacleaning);
+    setContract(initialContract);
+    setAudioFile(null);
+    setCreatedLeadId(undefined);
+    setAudioUploaded(false);
+    setWizardData({});
+    setStepResults({});
+    setPendingOverlaps([]);
+    setActiveStep(0);
+    resetFeedback();
+    setSessionKey((key) => key + 1);
   }
 
   /**
@@ -520,12 +520,14 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
       .map(decodeURIComponent);
 
     if (warnings.length > 0) {
-      return `Utkast skapat och nedladdat: ${fileName}. ${warnings.join(" ")}`;
+      return `Dokumentet är skapat och nedladdat: ${fileName}. ${warnings.join(" ")}`;
     }
 
-    return `Utkast skapat och nedladdat: ${fileName} (${describeAttachment(
+    // No draft mark: the seller reviews the document before it goes to the
+    // customer, which is what the reminder here is for.
+    return `Dokumentet är skapat och nedladdat: ${fileName} (${describeAttachment(
       response.headers.get("X-Attachment-Target")
-    )}). Godkänd avtalstext saknas fortfarande.`;
+    )}). Granska det innan det skickas till kunden.`;
   }
 
   /** Lets a seller deliberately re-run a completed step. */
@@ -600,10 +602,14 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
               Fält märkta med <span className="required-mark">*</span> måste fyllas i innan steget kan köras.
             </p>
           </div>
-          <div className="status-pill">Utkastläge</div>
+          <div className="toolbar-actions">
+            <button className="btn" type="button" onClick={() => setConfirmingReset(true)}>
+              Ny kund
+            </button>
+          </div>
         </div>
 
-        <div className="workspace">
+        <div className="workspace" key={sessionKey}>
           <section className="panel">
             {active.kind === "meeting" && (
               <MeetingStep
@@ -701,11 +707,21 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
             <dl className="summary-list">
               <div>
                 <dt>Kund/bolag</dt>
-                <dd>{summary.customer}</dd>
+                <dd>
+                  {summary.customer}
+                  {summary.customerId !== undefined && (
+                    <span className="field-hint"> · kopplad, Pipedrive-ID {summary.customerId}</span>
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Kontakt</dt>
-                <dd>{summary.person}</dd>
+                <dd>
+                  {summary.person}
+                  {summary.personId !== undefined && (
+                    <span className="field-hint"> · kopplad, Pipedrive-ID {summary.personId}</span>
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Prospekt</dt>
@@ -727,6 +743,8 @@ export function SalesWizard({ currentUser }: { currentUser: string }) {
           </aside>
         </div>
       </section>
+
+      {confirmingReset && <ResetDialog onCancel={() => setConfirmingReset(false)} onConfirm={resetSession} />}
 
       {pendingOverlaps.length > 0 && (
         <OverlapDialog

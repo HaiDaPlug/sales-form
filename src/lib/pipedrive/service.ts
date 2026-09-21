@@ -407,7 +407,9 @@ export async function searchLeads(term: string, organizationId?: CrmRecordId): P
       name: asString(item.title) ?? "Namnlöst prospekt",
       detail: detail || undefined,
       organizationId: organization ? asRecordId(organization.id) : undefined,
-      organizationName: organization ? asString(organization.name) : undefined
+      organizationName: organization ? asString(organization.name) : undefined,
+      personId: person ? asRecordId(person.id) : undefined,
+      personName: person ? asString(person.name) : undefined
     };
   });
 }

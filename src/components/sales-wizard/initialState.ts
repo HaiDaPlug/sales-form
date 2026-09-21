@@ -4,6 +4,7 @@ import type {
   MeetingStepData,
   ProspectStepData
 } from "@/lib/crm/types";
+import { DEFAULT_CONTRACT_TEMPLATE_ID } from "@/lib/pdf/templates/contract";
 
 /**
  * The state each wizard step starts from.
@@ -45,7 +46,8 @@ export const initialProspect: ProspectStepData = {
   monthlyCost: 0,
   startFee: 0,
   totalDealValue: 0,
-  bindingPeriodMonths: 12
+  // The client's standard term. The seller can type another.
+  bindingPeriodMonths: 24
 };
 
 export const initialMediacleaning: MediacleaningStepData = {
@@ -53,7 +55,9 @@ export const initialMediacleaning: MediacleaningStepData = {
   organizationNumber: "",
   address: "",
   city: "",
-  documentTypes: [],
+  // Always a cancellation run: the summary page is part of every delivery and
+  // no longer something the seller chooses.
+  documentTypes: ["cancellation"],
   suppliers: [],
   internalComment: "",
   signerName: "",
@@ -64,13 +68,14 @@ export const initialMediacleaning: MediacleaningStepData = {
 };
 
 export const initialContract: ContractStepData = {
+  templateId: DEFAULT_CONTRACT_TEMPLATE_ID,
   companyName: "",
   organizationNumber: "",
   signerName: "",
   address: "",
   price: 0,
   paymentInterval: "monthly",
-  bindingPeriodMonths: 12,
+  bindingPeriodMonths: 24,
   includedServices: ["Digital Kontakt"],
   includeMediacleaningDocuments: false,
   organizationId: "",
