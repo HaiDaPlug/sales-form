@@ -1,5 +1,166 @@
 # Current State
 
+## 2026-09-20 — A prospect no longer lands on the previous customer; half of the 09-17 change list is built; 428 tests pass
+
+The client's technician delivered a second change document on 09-17
+(reset, step order, org-number autofill, prospect form changes, sales outcome,
+Mediacleaning naming, contract templates, status-page access control), together
+with a defect report: a prospect entered as **Falafel AB** was saved under
+**Kebab AB**, and the retry "didn't work". The defect is fixed, the items that
+needed no decision are built, and the rest waits on answers listed at the end.
+Everything is **uncommitted** on `feat/prospekt-overhaul` at the time of
+writing.
+
+### The defect, and why "Koppla loss" did not help
+
+After the first successful prospect the server returns Kebab AB's person and
+organization ids and the wizard writes them into every step. Retyping the
+organization name did not touch the id underneath, so the lookup box showed
+"✓ Falafel AB (ID <Kebab's id>)" — the label from the editable field, the id
+from the previous customer. On submit `resolveProspectParties` saw both ids and
+reused both records: a lead titled "Falafel AB Prospekt", attached to Kebab AB
+and Kebab's contact. Falafel AB was never created.
+
+Unlinking only the organization made it worse: the contact still carried
+Kebab's organization id, and the server refused with "Den befintliga kontakten
+tillhör en annan organisation". The only reset that existed was a page reload.
+
+The created lead id leaked the same way: it survived "Kör steget igen" and was
+copied into the Mediacleaning and contract steps, so the next customer's
+document note would have landed on the previous customer's prospect.
+
+### What changed
+
+- **Reset.** "Ny kund" in the toolbar, behind a confirmation dialog, clears
+  all four steps, the recording, the created lead, the resolved ids and the
+  done marks, and remounts the step area so search terms and conflict state go
+  too. The side panel derives from that state and updates at once.
+- **Truthful linking.** A linked person's or organization's name is read-only
+  until "Koppla loss"; the side panel shows the linked Pipedrive id beside the
+  name. The label on screen can no longer drift from the id underneath.
+- **Autofill on every link, and the org-number bug.** `searchOrganizations`
+  read the organisationsnummer off the search hit by its field hash, and
+  Pipedrive's search results do not carry custom fields that way — so it was
+  always missing. The document steps had always fetched the full record by id
+  instead, which works. Every step now goes through one
+  `fetchOrganizationProfile` and fills name, number, website, address and
+  city. Linking a person brings their organization along; linking a prospect
+  in the document steps fills its organization and sets its contact as
+  signatory (`searchLeads` now returns the person).
+- **Matching as the seller types.** `SuggestionBox` searches Pipedrive as the
+  contact or organization fields fill in and offers matches under the section
+  with the reason. Exact email, phone or identity number is a strong match,
+  listed first; a similar name is shown but never chosen for the seller. A
+  miss is not proof the customer is new (the search index lags), so nothing
+  here blocks the form. Rules in `matching.ts`, tested.
+- **Prospect before meeting.** Carry-over was keyed on step *position* and
+  would have pointed at the wrong neighbour after the reorder; it now lives in
+  `hydration.ts`, keyed on step kind, runs in both directions between prospect
+  and meeting, and is tested.
+- **Mediacleaning is named after the customer.** No "Utkast" box, header,
+  footer or file suffix; the summary page is titled **"Uppsägningar"**,
+  subtitled with the customer, and included in every delivery. The document
+  checkboxes are gone because there is nothing left to choose.
+- **No draft mark anywhere.** On 09-18 the client decided that no document
+  carries one, since the seller reviews it before sending. The contract lost
+  its notice box, "utkast" subtitle, footer and file suffix; the
+  `X-Document-Draft` headers and the "Utkastläge" pill are gone; the wizard
+  message now says the document is created and reminds the seller to review it.
+- **Contract types.** `templates/contract.ts` holds two placeholder types
+  ("Avtalstyp 1", "Avtalstyp 2") with the wording blocks the generator prints.
+  The schema validates the choice and defaults to the first, so the flow test
+  and older payloads still work. The step has an "Avtalstyp" select; the
+  Pipedrive note records the type. The client's real names and texts are a
+  change to the template file alone.
+- **Bindningstid** starts at 24 months on both the prospect and the contract,
+  free to change.
+
+### Client decisions recorded 2026-09-18
+
+Relayed over chat by the client contact, who has Pipedrive admin rights:
+
+- Totalt affärsvärde is **not** wanted: "CRM-systemet räknar ut värdet".
+  Whether the plain "Värde" field goes with it is being checked with Salah.
+- Bindningstid: default 24, any value allowed. Built.
+- No "Utkast" in any document. Built.
+- **Approval is conversion.** The decision dropdown needs only "Väntar på
+  beslut" and "Icke godkänd", plus a free-text reason the administrator fills
+  in when declining; the portal shows both to the seller.
+- The client creates the three custom deal fields themselves (Säljstatus,
+  Beslut, Orsak). The portal's token can read the field keys from
+  `/dealFields`, so only the field names are needed once they exist.
+- They want a seller to **reopen their own prospect** to change price, binding
+  period, invoice group, start date and "viktigast för kunden", and to add the
+  recording or contract later. See the open items.
+- Pipedrive Scheduler is parked. They keep the portal's booker provided it
+  respects Salah's calendar — which it does for booked activities once
+  `PIPEDRIVE_TECHNICIAN_USER_IDS` holds his user id; the Scheduler's own
+  "available hours" setting has no API and is replaced by the portal's working
+  window.
+
+### Verification
+
+- `npm test` — **428/428 across 30 files** (was 403/28). New: `hydration`,
+  `matching`, contract-type and no-draft-mark tests.
+- `npm run typecheck` — passes.
+- ESLint on every changed file — passes. The full-project lint still hangs.
+- `npm run build` — passes. The first attempt crashed in Next's TypeScript
+  worker with a Windows fail-fast exit code (`3221226505`); the standalone
+  typecheck had just passed and the rerun built cleanly, so it is read as a
+  transient worker crash.
+- **Not done:** a browser pass. Suggestions, the profile fill, the reset dialog
+  and the contract-type select are interaction code the Node runner cannot
+  exercise. Click through prospect, meeting, Mediacleaning and one contract of
+  each type against the live account before this goes to the sellers.
+
+### Waiting on, in the order it blocks things
+
+1. **Salah:** remove Totalt affärsvärde only, or the "Värde" field too. Blocks
+   the prospect form changes (remove Avtalslängd and Startavgift, rename
+   Månadskostnad to Pris).
+2. **A go from Hai** on letting a seller edit their own open prospects. It
+   does not touch the client's original boundary (no deals, no conversion, no
+   approval) but it widens the portal's own rule that existing records are
+   read-only, which `boundaries.test.ts` enforces as exactly one PATCH path.
+   Proposed: only prospects assigned to the seller and still "Väntar på
+   beslut", only the allowlisted fields, never organization, contact or
+   seller. The audio route already checks ownership.
+3. **The client:** the three Pipedrive fields, then their names. Blocks the
+   sales outcome at creation and the decision/reason columns on the status
+   page. Pipedrive has, as far as we know, no default-value setting on custom
+   fields; the portal will write "Väntar på beslut" at creation.
+4. **The client:** the two contract texts and the names each type should
+   show. A template-file swap.
+5. **The client:** Salah's Pipedrive user id for the technician pool, and his
+   working hours for the slot window.
+6. **Status page for converted and declined prospects.** Pipedrive still
+   cannot list archived leads (09-11). Plan: derive converted rows from deals
+   carrying `source_lead_id`, and read declined or shelved ones by id from the
+   portal's own history table, which records every lead it created per seller.
+7. Deferred by the client: a popup opened from an external link in the meeting
+   step, after the Kontakt section (`docs/INTENTIONS.md`).
+8. Still standing from earlier entries: the three ZZTEST leads, deal `806`,
+   supplier organisationsnummer, the one-page deal listing.
+
+### Worth knowing before touching this
+
+- The profile fetch writes the state it captured at link time, so a value
+  typed in the half second before it resolves can be overwritten. The
+  document steps always behaved this way.
+- `SuggestionBox` fires one request per typed value after a pause. Pipedrive
+  rate limits were not tested under that load.
+- `searchOrganizations` still reads the org number off the hit. Harmless now
+  that the profile fetch supplies it; left to keep the diff small.
+- The remaining "UTKAST" mentions are in `docs/prospekt-overhaul-analysis.md`,
+  a historical record, and one explanatory comment.
+
+### Corrections to the 09-11 entry
+
+- "Both document workflows are still marked `UTKAST`" no longer holds: neither
+  is, by the client's decision.
+- The README's workflow order is now prospect, meeting, Mediacleaning,
+  contract.
+
 ## 2026-09-11 — The two custom fields exist; prospect creation works end to end; 403 tests pass
 
 The blocker recorded on 09-09 is gone. An administrator created **"Underlag"**

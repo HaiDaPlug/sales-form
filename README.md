@@ -3,8 +3,8 @@
 Internal sales workflow portal for Digital Kontakt. The app guides sellers
 through four workflows while using Pipedrive as the CRM record system:
 
-1. Meeting booking
-2. Create prospect
+1. Create prospect
+2. Meeting booking
 3. Mediacleaning cancellation documents
 4. Contract generation
 
@@ -142,10 +142,13 @@ a shared registry a seller can add to; most of the shipped list still has no
 organisationsnummer, and those stay blank rather than guessed, because a wrong
 identity number on a cancellation is worse than none.
 
-Both document workflows are still marked `UTKAST`. The client owes the final
-legal wording before anything is sent to a customer. The Mediacleaning copy is
-isolated in `src/lib/pdf/templates/mediacleaning.ts` so an approved version can
-be swapped in without touching pagination or upload logic.
+Neither document carries a draft mark: the seller reviews a document before
+sending it, so the client asked for both to be delivered as is, named after the
+customer. The Mediacleaning document always closes with the "Uppsägningar"
+summary page. The client still owes the final wording. Both texts are isolated
+in `src/lib/pdf/templates/` — the Mediacleaning copy, and the two contract types
+the seller chooses between under "Avtalstyp" — so approved versions can be
+swapped in without touching pagination, the form or upload logic.
 
 ## Still needed from the client
 
